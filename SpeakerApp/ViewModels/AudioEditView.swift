@@ -41,8 +41,6 @@ struct AudioEditView: View {
         }
     }
 
-    // MARK: - Pieces
-
     private var background: some View {
         Group {
             #if os(macOS)
@@ -121,14 +119,15 @@ struct AudioEditView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        playback.togglePartialPlay(url: storedMP3URL, words: transcriptVM.words)
+                        // ✅ Use SAME chunks as UI so highlighting works
+                        playback.togglePartialPlay(url: storedMP3URL, chunks: transcriptVM.sentenceChunks)
                     } label: {
                         Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
                               systemImage: "scissors")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(transcriptVM.words.isEmpty || transcriptVM.isTranscribing)
+                    .disabled(transcriptVM.sentenceChunks.isEmpty || transcriptVM.isTranscribing)
 
                     Button {
                         playback.cycleLoopCount()
@@ -199,7 +198,7 @@ struct AudioEditView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // ✅ Interactive transcript box (tap a sentence to play that segment)
+            // ✅ Interactive sentence list (tap to play that segment)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if transcriptVM.sentenceChunks.isEmpty {
@@ -219,36 +218,19 @@ struct AudioEditView: View {
                                 )
                             } label: {
                                 HStack(alignment: .top, spacing: 10) {
-                                    // small index marker
                                     Text("\(idx + 1).")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                         .frame(width: 28, alignment: .trailing)
 
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        HStack(spacing: 8) {
-                                            if isActive {
-                                                Image(systemName: "speaker.wave.2.fill")
-                                                    .foregroundStyle(.orange)
-                                            }
-                                            Text(chunk.text)
-                                                .foregroundStyle(isActive ? .orange : .primary)
-                                                .fontWeight(isActive ? .semibold : .regular)
-                                        }
-
-                                        // Optional time debug (remove later)
-                                        // Text(String(format: "%.2f–%.2f", chunk.start, chunk.end))
-                                        //     .font(.caption2)
-                                        //     .foregroundStyle(.secondary)
-                                    }
-
-                                    Spacer(minLength: 0)
+                                    Text(chunk.text)
+                                        .foregroundStyle(isActive ? .orange : .primary) // ✅ only color changes
+                                        .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(isActive ? .orange.opacity(0.12) : Color.clear)
+                                        .fill(isActive ? .orange.opacity(0.10) : Color.clear)
                                 )
                             }
                             .buttonStyle(.plain)
