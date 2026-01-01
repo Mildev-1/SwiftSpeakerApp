@@ -2,8 +2,6 @@
 //  AudioLibrary.swift
 //  SpeakerApp
 //
-//  In-memory storage for AudioItem entries.
-//
 
 import Foundation
 import Combine
@@ -12,7 +10,26 @@ import Combine
 final class AudioLibrary: ObservableObject {
     @Published private(set) var items: [AudioItem] = []
 
-    /// Suggested pattern: MyScript01, MyScript02, ...
+    private let store = AudioLibraryStore.shared
+    private let storage = AudioStorage.shared
+
+    init() {
+        loadFromDisk()
+    }
+
+    func loadFromDisk() {
+        do {
+            let loaded = try store.load()
+            // prune entries if the stored file is missing
+            items = loaded.filter { item in
+                let url = storage.urlForStoredFile(relativePath: item.storedRelativePath)
+                return FileManager.default.fileExists(atPath: url.path)
+            }
+        } catch {
+            items = []
+        }
+    }
+
     func nextSuggestedScriptName() -> String {
         let prefix = "MyScript"
 
@@ -31,14 +48,27 @@ final class AudioLibrary: ObservableObject {
         return "\(prefix)\(formatted)"
     }
 
-    func addAudio(url: URL, scriptName: String) {
+    func importAndAdd(sourceURL: URL, scriptName: String) throws {
         let trimmed = scriptName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finalName = trimmed.isEmpty ? nextSuggestedScriptName() : trimmed
-        items.append(AudioItem(url: url, scriptName: finalName))
+        let finalScriptName = trimmed.isEmpty ? nextSuggestedScriptName() : trimmed
+
+        let originalName = sourceURL.lastPathComponent
+        let copyResult = try storage.copyImportedMP3ToInternalStorage(sourceURL: sourceURL)
+
+        let item = AudioItem(
+            scriptName: finalScriptName,
+            originalFileName: originalName,
+            storedFileName: copyResult.storedFileName,
+            storedRelativePath: copyResult.relativePath
+        )
+
+        items.append(item)
+        try store.save(items)
     }
 
     func updateScriptName(id: UUID, name: String) {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         items[idx].scriptName = name
+        do { try store.save(items) } catch { }
     }
 }

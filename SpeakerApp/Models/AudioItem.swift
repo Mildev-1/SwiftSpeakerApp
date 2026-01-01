@@ -2,24 +2,37 @@
 //  AudioItem.swift
 //  SpeakerApp
 //
-//  Stores a selected audio file URL + user script name (displayed in grid).
+//  Stores scriptName (shown in grid) and the copied file location (internal storage).
 //
 
 import Foundation
 
-struct AudioItem: Identifiable, Hashable {
+struct AudioItem: Identifiable, Hashable, Codable {
     let id: UUID
-    let url: URL
 
-    /// Display name shown in the grid: e.g. "MyScript01"
+    /// Shown in the grid, e.g. "MyScript01"
     var scriptName: String
 
-    /// Real source filename for later processing (NOT shown in grid)
-    var sourceFileName: String { url.lastPathComponent }
+    /// Original filename the user picked, preserved for later edit processing
+    let originalFileName: String
 
-    init(id: UUID = UUID(), url: URL, scriptName: String) {
+    /// The filename actually stored in app internal storage (usually same as originalFileName)
+    let storedFileName: String
+
+    /// Relative path under AudioFiles folder (we persist this; absolute paths can change)
+    let storedRelativePath: String
+
+    init(
+        id: UUID = UUID(),
+        scriptName: String,
+        originalFileName: String,
+        storedFileName: String,
+        storedRelativePath: String
+    ) {
         self.id = id
-        self.url = url
         self.scriptName = scriptName
+        self.originalFileName = originalFileName
+        self.storedFileName = storedFileName
+        self.storedRelativePath = storedRelativePath
     }
 }

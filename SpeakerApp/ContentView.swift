@@ -62,10 +62,16 @@ struct ContentView: View {
                         isShowingTitleSheet = false
                     },
                     onSave: { name in
-                        library.addAudio(url: url, scriptName: name)
-                        pendingURL = nil
-                        pendingSuggestedName = ""
-                        isShowingTitleSheet = false
+                        do {
+                            try library.importAndAdd(sourceURL: url, scriptName: name)
+
+                            pendingURL = nil
+                            pendingSuggestedName = ""
+                            isShowingTitleSheet = false
+                        } catch {
+                            alertMessage = error.localizedDescription
+                            showAlert = true
+                        }
                     }
                 )
             }
