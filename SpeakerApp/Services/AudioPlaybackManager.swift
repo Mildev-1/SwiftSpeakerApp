@@ -18,7 +18,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var partialIndex: Int = 0
     @Published private(set) var partialTotal: Int = 0
 
-    // ✅ NEW: highlight sentence currently played by tapping
+    // Highlight sentence currently played by tapping
     @Published private(set) var currentSentenceID: UUID? = nil
 
     @Published var errorMessage: String? = nil
@@ -27,7 +27,11 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     private var loadedURL: URL?
 
     private var partialTask: Task<Void, Never>?
-    private var singleSegmentTask: Task<Void, Never>?   // ✅ NEW
+    private var singleSegmentTask: Task<Void, Never>?
+
+    // ✅ Padding to avoid clipping last phoneme / first consonant
+    private let headPad: Double = 0.02   // 20ms earlier start
+    private let tailPad: Double = 0.12   // 120ms extra at end (fixes “last letter cut”)
 
     func loadIfNeeded(url: URL) {
         if loadedURL == url, player != nil { return }
@@ -76,7 +80,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     func togglePlay(url: URL) {
-        // stop partial + single-segment if user hits normal play
         stopPartialPlayback()
         singleSegmentTask?.cancel()
         singleSegmentTask = nil
@@ -119,23 +122,21 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
 
-        let s = max(0, start)
-        let e = max(s, end)
-        let dur = e - s
-        guard dur > 0.03 else { return }
+        let seg = adjustedSegment(start: start, end: end, playerDuration: p.duration)
+        guard seg.duration > 0.03 else { return }
 
         currentSentenceID = sentenceID
 
         p.stop()
         p.numberOfLoops = 0
-        p.currentTime = s
+        p.currentTime = seg.start
         p.play()
         isPlaying = true
 
         singleSegmentTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(nanoseconds: UInt64(dur * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(seg.duration * 1_000_000_000))
             } catch {
                 await MainActor.run {
                     self.isPlaying = false
@@ -146,7 +147,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
             await MainActor.run {
                 self.player?.pause()
-                self.player?.currentTime = e
+                self.player?.currentTime = seg.end
                 self.isPlaying = false
                 self.currentSentenceID = nil
             }
@@ -156,7 +157,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     // MARK: - Partial playback (sentence-by-sentence)
 
     func togglePartialPlay(url: URL, words: [WordTiming]) {
-        // tapping partial should cancel single-segment play
         singleSegmentTask?.cancel()
         singleSegmentTask = nil
         currentSentenceID = nil
@@ -170,7 +170,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     private func startPartialPlayback(url: URL, words: [WordTiming]) {
-        stop() // stops normal + cancels single-segment
+        stop()
 
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
@@ -227,21 +227,18 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return false }
 
-        let start = max(0, seg.start)
-        let end = max(start, seg.end)
-        let duration = end - start
-        if duration < 0.03 { return true }
+        let adj = adjustedSegment(start: seg.start, end: seg.end, playerDuration: p.duration)
+        if adj.duration < 0.03 { return true }
 
         p.stop()
-        p.currentTime = start
+        p.currentTime = adj.start
         p.numberOfLoops = 0
 
         p.play()
         isPlaying = true
 
-        let nanos = UInt64(duration * 1_000_000_000)
         do {
-            try await Task.sleep(nanoseconds: nanos)
+            try await Task.sleep(nanoseconds: UInt64(adj.duration * 1_000_000_000))
         } catch {
             p.stop()
             isPlaying = false
@@ -249,14 +246,21 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
 
         p.pause()
-        p.currentTime = end
+        p.currentTime = adj.end
         isPlaying = false
         return true
     }
 
+    private func adjustedSegment(start: Double, end: Double, playerDuration: Double) -> (start: Double, end: Double, duration: Double) {
+        // Apply pads and clamp to file duration
+        let s = max(0, start - headPad)
+        let e = min(playerDuration, max(s, end + tailPad))
+        return (s, e, max(0, e - s))
+    }
+
     private func beep() async {
         #if os(iOS)
-        AudioServicesPlaySystemSound(1104)
+        AudioServicesPlaySystemSound(1104) // "tock"
         #endif
     }
 

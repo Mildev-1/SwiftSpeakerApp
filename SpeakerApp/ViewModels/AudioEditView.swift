@@ -28,9 +28,9 @@ struct AudioEditView: View {
                         transcriptSection
                         errorSection
                     }
-                    .frame(maxWidth: 720)              // keeps it nice on iPad/mac
-                    .frame(maxWidth: .infinity)        // center inside ScrollView
-                    .padding(.horizontal, 16)          // ✅ main side margins
+                    .frame(maxWidth: 720)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
                     .padding(.vertical, 18)
                 }
             }
@@ -51,7 +51,7 @@ struct AudioEditView: View {
             Color(.systemBackground)
             #endif
         }
-        .ignoresSafeArea() // background only
+        .ignoresSafeArea()
     }
 
     private var topBar: some View {
@@ -73,10 +73,9 @@ struct AudioEditView: View {
 
             Spacer()
 
-            // keep symmetry
             Rectangle().fill(.clear).frame(width: 44, height: 44)
         }
-        .padding(.horizontal, 16)   // ✅ margins for top bar
+        .padding(.horizontal, 16)
         .padding(.top, 12)
         .padding(.bottom, 10)
     }
@@ -100,7 +99,6 @@ struct AudioEditView: View {
 
     private var playbackSection: some View {
         VStack(spacing: 10) {
-            // ✅ Two-row layout so it never overflows on iPhone mini
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
                     Button {
@@ -201,16 +199,67 @@ struct AudioEditView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // ✅ Transcript box with proper padding/margins
+            // ✅ Interactive transcript box (tap a sentence to play that segment)
             ScrollView {
-                Text(transcriptVM.formattedTranscriptForDisplay.isEmpty
-                     ? "No transcript yet."
-                     : transcriptVM.formattedTranscriptForDisplay)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(12)
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if transcriptVM.sentenceChunks.isEmpty {
+                        Text("No transcript yet.")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 8)
+                    } else {
+                        ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
+                            let isActive = (playback.currentSentenceID == chunk.id)
+
+                            Button {
+                                playback.playSegmentOnce(
+                                    url: storedMP3URL,
+                                    start: chunk.start,
+                                    end: chunk.end,
+                                    sentenceID: chunk.id
+                                )
+                            } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    // small index marker
+                                    Text("\(idx + 1).")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 28, alignment: .trailing)
+
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        HStack(spacing: 8) {
+                                            if isActive {
+                                                Image(systemName: "speaker.wave.2.fill")
+                                                    .foregroundStyle(.orange)
+                                            }
+                                            Text(chunk.text)
+                                                .foregroundStyle(isActive ? .orange : .primary)
+                                                .fontWeight(isActive ? .semibold : .regular)
+                                        }
+
+                                        // Optional time debug (remove later)
+                                        // Text(String(format: "%.2f–%.2f", chunk.start, chunk.end))
+                                        //     .font(.caption2)
+                                        //     .foregroundStyle(.secondary)
+                                    }
+
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(isActive ? .orange.opacity(0.12) : Color.clear)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .contentShape(Rectangle())
+                            .animation(.easeInOut(duration: 0.15), value: playback.currentSentenceID)
+                        }
+                    }
+                }
+                .padding(12)
             }
-            .frame(minHeight: 240)
+            .frame(minHeight: 260)
             .background(.thinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
