@@ -2,8 +2,6 @@
 //  AudioGridRowView.swift
 //  SpeakerApp
 //
-//  Full-width row: editable script name + Edit button.
-//
 
 import SwiftUI
 
@@ -21,8 +19,6 @@ struct AudioGridRowView: View {
                 onEditTapped()
             }
             .buttonStyle(.bordered)
-            // keep mock behavior: if you want it visually enabled but not functional:
-            // .disabled(true)
         }
         .padding(12)
         .frame(maxWidth: .infinity)

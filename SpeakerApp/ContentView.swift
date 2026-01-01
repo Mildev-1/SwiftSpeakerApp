@@ -2,8 +2,6 @@
 //  ContentView.swift
 //  SpeakerApp
 //
-//  Created by Mil Moc on 01/01/2026.
-//
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -19,67 +17,75 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
 
+    // ✅ New: edit sheet
+    @State private var editingItem: AudioItem? = nil
+
     private var mp3Type: UTType {
         UTType(filenameExtension: "mp3") ?? .audio
     }
 
     var body: some View {
-        VStack(spacing: 12) {
-            header
+        NavigationStack {
+            VStack(spacing: 12) {
+                header
 
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(library.items) { item in
-                        AudioGridRowView(
-                            scriptName: bindingForScriptName(itemID: item.id),
-                            onEditTapped: {
-                                // Mock for now (later you can use item.url / item.sourceFileName)
-                            }
-                        )
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(library.items) { item in
+                            AudioGridRowView(
+                                scriptName: bindingForScriptName(itemID: item.id),
+                                onEditTapped: {
+                                    editingItem = item
+                                }
+                            )
+                        }
                     }
+                    .padding(.horizontal)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .padding(.horizontal)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
-        }
-        .padding(.top, 8)
-        .fileImporter(
-            isPresented: $isShowingImporter,
-            allowedContentTypes: [mp3Type],
-            allowsMultipleSelection: false
-        ) { result in
-            handleImporterResult(result)
-        }
-        .sheet(isPresented: $isShowingTitleSheet) {
-            if let url = pendingURL {
-                TitleAudioSheet(
-                    fileURL: url,
-                    suggestedName: pendingSuggestedName,
-                    onCancel: {
-                        pendingURL = nil
-                        pendingSuggestedName = ""
-                        isShowingTitleSheet = false
-                    },
-                    onSave: { name in
-                        do {
-                            try library.importAndAdd(sourceURL: url, scriptName: name)
-
+            .padding(.top, 8)
+            .fileImporter(
+                isPresented: $isShowingImporter,
+                allowedContentTypes: [mp3Type],
+                allowsMultipleSelection: false
+            ) { result in
+                handleImporterResult(result)
+            }
+            .sheet(isPresented: $isShowingTitleSheet) {
+                if let url = pendingURL {
+                    TitleAudioSheet(
+                        fileURL: url,
+                        suggestedName: pendingSuggestedName,
+                        onCancel: {
                             pendingURL = nil
                             pendingSuggestedName = ""
                             isShowingTitleSheet = false
-                        } catch {
-                            alertMessage = error.localizedDescription
-                            showAlert = true
+                        },
+                        onSave: { name in
+                            do {
+                                try library.importAndAdd(sourceURL: url, scriptName: name)
+                                pendingURL = nil
+                                pendingSuggestedName = ""
+                                isShowingTitleSheet = false
+                            } catch {
+                                alertMessage = error.localizedDescription
+                                showAlert = true
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
-        }
-        .alert("Cannot Add File", isPresented: $showAlert) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(alertMessage)
+            // ✅ New: Audio playback sheet when Edit is clicked
+            .sheet(item: $editingItem) { item in
+                AudioEditView(item: item)
+            }
+            .alert("Cannot Add File", isPresented: $showAlert) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(alertMessage)
+            }
         }
     }
 
