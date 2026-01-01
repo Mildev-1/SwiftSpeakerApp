@@ -28,11 +28,10 @@ enum AudioChunkExporter {
         }
     }
 
-    /// ✅ Reliable chunking: builds an AVMutableComposition per chunk (does not rely on export.timeRange)
+    /// Reliable chunking: build a composition per chunk (doesn't rely on export.timeRange).
     static func exportM4AChunks(sourceURL: URL, chunkSeconds: Double = 55.0) async throws -> [Chunk] {
         let asset = AVURLAsset(url: sourceURL)
 
-        // Load duration reliably
         let durationTime: CMTime
         if #available(iOS 15.0, *) {
             durationTime = try await asset.load(.duration)
@@ -45,7 +44,6 @@ enum AudioChunkExporter {
             throw ExportError.invalidDuration
         }
 
-        // Load audio tracks
         let audioTracks: [AVAssetTrack]
         if #available(iOS 15.0, *) {
             audioTracks = try await asset.loadTracks(withMediaType: .audio)
@@ -63,14 +61,11 @@ enum AudioChunkExporter {
         while start < totalSeconds {
             let dur = min(chunkSeconds, totalSeconds - start)
 
-            // Build composition with only this slice
             let composition = AVMutableComposition()
-            guard
-                let compTrack = composition.addMutableTrack(
-                    withMediaType: .audio,
-                    preferredTrackID: kCMPersistentTrackID_Invalid
-                )
-            else {
+            guard let compTrack = composition.addMutableTrack(
+                withMediaType: .audio,
+                preferredTrackID: kCMPersistentTrackID_Invalid
+            ) else {
                 throw ExportError.noAudioTrack
             }
 
@@ -84,7 +79,6 @@ enum AudioChunkExporter {
                 throw ExportError.exportFailed("insertTimeRange failed: \(error.localizedDescription)")
             }
 
-            // Export composition to M4A
             guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
                 throw ExportError.cannotCreateExport
             }

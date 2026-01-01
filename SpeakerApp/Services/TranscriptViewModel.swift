@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AVFoundation
 
 @MainActor
 final class TranscriptViewModel: ObservableObject {
@@ -13,8 +14,11 @@ final class TranscriptViewModel: ObservableObject {
     @Published var chunksTotal: Int = 0
     @Published var chunkIndex: Int = 0
 
-    /// Transcribe a (stored) MP3 by exporting to multiple short M4A chunks and transcribing each chunk offline.
-    /// This works around Speech framework's practical ~1 minute per-request behavior.
+    // extra debug so you can confirm the chunk durations are correct
+    @Published var chunkDurations: [Double] = []
+
+    /// ✅ Correct approach:
+    /// MP3 -> (full) M4A -> chunk M4A -> Speech per chunk -> merge text + word timings
     func transcribeFromMP3(mp3URL: URL, locale: Locale = .current) async {
         isTranscribing = true
         errorMessage = nil
@@ -23,18 +27,23 @@ final class TranscriptViewModel: ObservableObject {
         words = []
         chunksTotal = 0
         chunkIndex = 0
+        chunkDurations = []
 
-        var tempChunkURLs: [URL] = []
+        var tempURLsToDelete: [URL] = []
         var chunkErrors: [String] = []
 
         defer {
-            // Clean up temp files
-            for url in tempChunkURLs { try? FileManager.default.removeItem(at: url) }
+            for url in tempURLsToDelete { try? FileManager.default.removeItem(at: url) }
             isTranscribing = false
         }
 
         do {
-            let chunks = try await AudioChunkExporter.exportM4AChunks(sourceURL: mp3URL, chunkSeconds: 55.0)
+            // 1) Transcode full MP3 to a single M4A (stable timeline)
+            let fullM4AURL = try await AudioTranscoder.toM4A(sourceURL: mp3URL)
+            tempURLsToDelete.append(fullM4AURL)
+
+            // 2) Chunk the M4A (not the MP3)
+            let chunks = try await AudioChunkExporter.exportM4AChunks(sourceURL: fullM4AURL, chunkSeconds: 55.0)
             chunksTotal = chunks.count
 
             guard !chunks.isEmpty else {
@@ -46,7 +55,11 @@ final class TranscriptViewModel: ObservableObject {
                 chunkIndex = i + 1
                 progress = Double(i) / Double(chunks.count)
 
-                tempChunkURLs.append(chunk.url)
+                tempURLsToDelete.append(chunk.url)
+
+                // Debug actual duration of exported chunk
+                let dur = await loadDurationSeconds(url: chunk.url)
+                chunkDurations.append(dur)
 
                 do {
                     let result = try await LocalSpeechTranscriber.transcribeOffline(
@@ -71,24 +84,36 @@ final class TranscriptViewModel: ObservableObject {
                     words.append(contentsOf: adjusted)
 
                 } catch {
-                    // Keep going, collect errors
-                    chunkErrors.append("Chunk \(i + 1)/\(chunks.count): \(error.localizedDescription)")
+                    chunkErrors.append("Chunk \(i + 1)/\(chunks.count) failed: \(error.localizedDescription)")
                 }
 
                 progress = Double(i + 1) / Double(chunks.count)
             }
 
-            // If some chunks failed, show a summary but keep whatever we got
             if !chunkErrors.isEmpty {
-                // show first error + count (avoid huge UI spam)
                 let first = chunkErrors.first ?? "Unknown error"
-                errorMessage = "\(chunkErrors.count) chunk(s) failed. First error: \(first)"
+                errorMessage = "\(chunkErrors.count) chunk(s) failed. First: \(first)"
             } else {
                 errorMessage = nil
             }
 
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadDurationSeconds(url: URL) async -> Double {
+        let asset = AVURLAsset(url: url)
+        do {
+            if #available(iOS 15.0, *) {
+                let d = try await asset.load(.duration)
+                return d.seconds.isFinite ? d.seconds : 0
+            } else {
+                let d = asset.duration
+                return d.seconds.isFinite ? d.seconds : 0
+            }
+        } catch {
+            return 0
         }
     }
 }
