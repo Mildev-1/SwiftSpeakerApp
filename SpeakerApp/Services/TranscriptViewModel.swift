@@ -11,13 +11,21 @@ final class TranscriptViewModel: ObservableObject {
     @Published var statusText: String = ""
 
     // ✅ Manual overlay plan
-    @Published var sentenceEdits: [String: String] = [:]     // chunk.id -> edited text (with ⏸️)
-    @Published var manualCutTimes: [Double] = []             // absolute seconds in file
+    @Published var sentenceEdits: [String: String] = [:]              // chunk.id -> edited text (with ⏸️)
+    @Published var manualCutsBySentence: [String: [Double]] = [:]     // chunk.id -> [cut times]
 
     @Published private(set) var hasCachedTranscript: Bool = false
 
     private let transcriptStore = TranscriptStore.shared
     private let cutPlanStore = CutPlanStore.shared
+
+    /// Flattened manual cut times (used by playback)
+    var manualCutTimesFlattened: [Double] {
+        manualCutsBySentence
+            .filter { $0.key != "_legacy" }
+            .flatMap { $0.value }
+            .sorted()
+    }
 
     func loadIfAvailable(itemID: UUID) {
         do {
@@ -36,15 +44,18 @@ final class TranscriptViewModel: ObservableObject {
                 statusText = ""
             }
 
-            // load cut plan overlay (if any)
             if let plan = try cutPlanStore.load(itemID: itemID) {
-                // Keep only edits for chunks that still exist
                 let validIDs = Set(sentenceChunks.map { $0.id })
                 sentenceEdits = plan.sentenceEdits.filter { validIDs.contains($0.key) }
-                manualCutTimes = plan.manualCutTimes.sorted()
+
+                // keep only cuts for valid sentences (but also keep legacy bucket if present)
+                var cuts = plan.manualCutsBySentence
+                cuts = cuts.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
+                manualCutsBySentence = cuts
+
             } else {
                 sentenceEdits = [:]
-                manualCutTimes = []
+                manualCutsBySentence = [:]
             }
 
         } catch {
@@ -57,7 +68,7 @@ final class TranscriptViewModel: ObservableObject {
         do {
             let plan = CutPlanRecord(
                 sentenceEdits: sentenceEdits,
-                manualCutTimes: manualCutTimes.sorted(),
+                manualCutsBySentence: manualCutsBySentence,
                 updatedAt: Date()
             )
             try cutPlanStore.save(itemID: itemID, record: plan)
@@ -70,19 +81,43 @@ final class TranscriptViewModel: ObservableObject {
         sentenceEdits[chunk.id] ?? chunk.text
     }
 
-    /// Add manual cut time (dedupe within 30ms).
-    func addManualCutTime(itemID: UUID, time: Double) {
+    /// Called when user taps "Pause" button (quick add).
+    func addManualCutTime(itemID: UUID, chunkID: String, time: Double) {
         let t = max(0, time)
-        let epsilon = 0.03
-        if manualCutTimes.contains(where: { abs($0 - t) < epsilon }) { return }
-        manualCutTimes.append(t)
-        manualCutTimes.sort()
+        let eps = 0.03
+
+        var list = manualCutsBySentence[chunkID] ?? []
+        if list.contains(where: { abs($0 - t) < eps }) { return }
+
+        list.append(t)
+        list.sort()
+        manualCutsBySentence[chunkID] = list
         saveCutPlan(itemID: itemID)
     }
 
-    /// Update edited sentence text and persist.
-    func updateSentenceEdit(itemID: UUID, chunkID: String, newText: String) {
-        sentenceEdits[chunkID] = newText
+    /// Persist edited text and also sync cuts from ⏸️ markers.
+    /// This is the key: deleting emojis removes corresponding cuts.
+    func syncManualCutsForSentence(
+        itemID: UUID,
+        chunk: SentenceChunk,
+        finalEditedText: String
+    ) {
+        // store text
+        sentenceEdits[chunk.id] = finalEditedText
+
+        // recompute cuts from the CURRENT text content
+        let newTimes = SentenceCursorTimeMapper.pauseTimesFromEditedText(
+            editedText: finalEditedText,
+            chunk: chunk,
+            allWords: words
+        )
+
+        if newTimes.isEmpty {
+            manualCutsBySentence.removeValue(forKey: chunk.id)
+        } else {
+            manualCutsBySentence[chunk.id] = newTimes
+        }
+
         saveCutPlan(itemID: itemID)
     }
 
@@ -133,10 +168,11 @@ final class TranscriptViewModel: ObservableObject {
             )
             try transcriptStore.save(itemID: itemID, record: record)
 
-            // Keep existing manual plan, but drop edits for chunks that don't exist anymore
+            // prune invalid edits/cuts (sentence IDs can change if transcription changes)
             let validIDs = Set(sentenceChunks.map { $0.id })
             sentenceEdits = sentenceEdits.filter { validIDs.contains($0.key) }
-            manualCutTimes.sort()
+            manualCutsBySentence = manualCutsBySentence.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
+
             saveCutPlan(itemID: itemID)
 
         } catch {

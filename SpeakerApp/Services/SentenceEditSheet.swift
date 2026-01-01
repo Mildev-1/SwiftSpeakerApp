@@ -5,14 +5,13 @@ struct SentenceEditSheet: View {
     let audioURL: URL
     let words: [WordTiming]
 
-    /// Current editable text for this sentence (stored per chunk.id)
     @Binding var editedText: String
 
     /// Called when user inserts a pause mark; provides mapped absolute time
     let onAddPauseTime: (Double) -> Void
 
-    /// Called when closing to persist text edits
-    let onSave: () -> Void
+    /// ✅ Called when closing; provides final text so parent can sync cuts.
+    let onSaveAndClose: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var playback = AudioPlaybackManager()
@@ -25,7 +24,6 @@ struct SentenceEditSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
-                // Play button
                 Button {
                     playback.playSegmentOnce(
                         url: audioURL,
@@ -40,7 +38,6 @@ struct SentenceEditSheet: View {
                 .buttonStyle(.borderedProminent)
                 .disabled(!FileManager.default.fileExists(atPath: audioURL.path))
 
-                // Editable text with cursor tracking
                 CursorTextView(text: $editedText, selectedRange: $selectedRange, isFocused: $isFocused)
                     .frame(minHeight: 220)
                     .background(.thinMaterial)
@@ -56,12 +53,11 @@ struct SentenceEditSheet: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") {
-                        onSave()
+                        onSaveAndClose(editedText) // ✅ resync happens in parent
                         dismiss()
                     }
                 }
 
-                // Show Pause button only when cursor is active in the text view
                 ToolbarItem(placement: .topBarTrailing) {
                     if isFocused {
                         Button("Pause") {
@@ -77,7 +73,6 @@ struct SentenceEditSheet: View {
     }
 
     private func insertPauseEmojiAndPersistTime() {
-        // Insert emoji at cursor selection range
         let ns = editedText as NSString
         let safeLoc = max(0, min(selectedRange.location, ns.length))
         let safeLen = max(0, min(selectedRange.length, ns.length - safeLoc))
@@ -86,18 +81,16 @@ struct SentenceEditSheet: View {
         let newText = ns.replacingCharacters(in: r, with: pauseEmoji)
         editedText = newText
 
-        // Move cursor after inserted emoji
         let newLoc = safeLoc + (pauseEmoji as NSString).length
         selectedRange = NSRange(location: newLoc, length: 0)
 
-        // Map to time and persist cut time
         if let t = SentenceCursorTimeMapper.cursorTime(
             editedText: editedText,
             cursorLocationUTF16: newLoc,
             chunk: chunk,
             allWords: words
         ) {
-            onAddPauseTime(t)
+            onAddPauseTime(t) // quick add; final resync on close will correct removals
         }
     }
 }

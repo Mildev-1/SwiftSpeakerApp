@@ -52,12 +52,18 @@ struct AudioEditView: View {
                     set: { editingText = $0 }
                 ),
                 onAddPauseTime: { t in
-                    transcriptVM.addManualCutTime(itemID: item.id, time: t)
-                    // also persist the updated text immediately (so emoji doesn't disappear)
-                    transcriptVM.updateSentenceEdit(itemID: item.id, chunkID: chunk.id, newText: editingText)
+                    transcriptVM.addManualCutTime(itemID: item.id, chunkID: chunk.id, time: t)
+                    // keep text persisted as user types
+                    transcriptVM.sentenceEdits[chunk.id] = editingText
+                    transcriptVM.saveCutPlan(itemID: item.id)
                 },
-                onSave: {
-                    transcriptVM.updateSentenceEdit(itemID: item.id, chunkID: chunk.id, newText: editingText)
+                onSaveAndClose: { finalText in
+                    // ✅ This is the fix: resync cut plan from text (removes deleted pauses)
+                    transcriptVM.syncManualCutsForSentence(
+                        itemID: item.id,
+                        chunk: chunk,
+                        finalEditedText: finalText
+                    )
                 }
             )
         }
@@ -137,7 +143,7 @@ struct AudioEditView: View {
                         playback.togglePartialPlay(
                             url: storedMP3URL,
                             chunks: transcriptVM.sentenceChunks,
-                            manualCutTimes: transcriptVM.manualCutTimes
+                            manualCutTimes: transcriptVM.manualCutTimesFlattened
                         )
                     } label: {
                         Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
@@ -214,7 +220,6 @@ struct AudioEditView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // Sentence list (tap -> open popup)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if transcriptVM.sentenceChunks.isEmpty {
@@ -227,7 +232,6 @@ struct AudioEditView: View {
                             let textToShow = transcriptVM.displayText(for: chunk)
 
                             Button {
-                                // open sheet, preload editing text from persisted edits (or default)
                                 editingText = textToShow
                                 selectedChunk = chunk
                             } label: {
@@ -277,13 +281,4 @@ struct AudioEditView: View {
             }
         }
     }
-}
-
-#Preview {
-    AudioEditView(item: AudioItem(
-        scriptName: "MyScript01",
-        originalFileName: "example.mp3",
-        storedFileName: "example.mp3",
-        storedRelativePath: "example.mp3"
-    ), onClose: {})
 }
