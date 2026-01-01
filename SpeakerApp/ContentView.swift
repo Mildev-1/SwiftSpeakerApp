@@ -13,6 +13,7 @@ struct ContentView: View {
 
     @State private var isShowingImporter = false
     @State private var pendingURL: URL? = nil
+    @State private var pendingSuggestedName: String = ""
     @State private var isShowingTitleSheet = false
 
     @State private var showAlert = false
@@ -23,7 +24,6 @@ struct ContentView: View {
         GridItem(.fixed(80), spacing: 12, alignment: .trailing)
     ]
 
-    // ✅ Works even if UTType.mp3 is unavailable in your SDK
     private var mp3Type: UTType {
         UTType(filenameExtension: "mp3") ?? .audio
     }
@@ -34,7 +34,7 @@ struct ContentView: View {
 
             ScrollView {
                 LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                    Text("Title")
+                    Text("Name")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Text("")
@@ -43,9 +43,10 @@ struct ContentView: View {
 
                     ForEach(library.items) { item in
                         AudioGridRowView(
-                            title: item.title,
+                            title: item.scriptName,   // ✅ grid shows ONLY scriptName
                             onEditTapped: {
-                                // Mock for now
+                                // mock for now
+                                // later you can use item.url / item.sourceFileName here
                             }
                         )
                         Divider().gridCellColumns(2)
@@ -67,13 +68,16 @@ struct ContentView: View {
             if let url = pendingURL {
                 TitleAudioSheet(
                     fileURL: url,
+                    suggestedName: pendingSuggestedName,
                     onCancel: {
                         pendingURL = nil
+                        pendingSuggestedName = ""
                         isShowingTitleSheet = false
                     },
-                    onSave: { title in
-                        library.addAudio(url: url, title: title)
+                    onSave: { name in
+                        library.addAudio(url: url, scriptName: name)
                         pendingURL = nil
+                        pendingSuggestedName = ""
                         isShowingTitleSheet = false
                     }
                 )
@@ -112,15 +116,14 @@ struct ContentView: View {
         case .success(let urls):
             guard let url = urls.first else { return }
 
-            // Extra safety: ensure .mp3
-            let ext = url.pathExtension.lowercased()
-            guard ext == "mp3" else {
+            guard url.pathExtension.lowercased() == "mp3" else {
                 alertMessage = "Please choose an .mp3 file."
                 showAlert = true
                 return
             }
 
             pendingURL = url
+            pendingSuggestedName = library.nextSuggestedScriptName() // ✅ MyScript01...
             isShowingTitleSheet = true
 
         case .failure(let error):

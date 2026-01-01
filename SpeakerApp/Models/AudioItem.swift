@@ -2,7 +2,7 @@
 //  AudioItem.swift
 //  SpeakerApp
 //
-//  Stores a selected audio file URL + user title.
+//  Stores a selected audio file URL + user script name (displayed in grid).
 //
 
 import Foundation
@@ -10,11 +10,16 @@ import Foundation
 struct AudioItem: Identifiable, Hashable {
     let id: UUID
     let url: URL
-    var title: String
 
-    init(id: UUID = UUID(), url: URL, title: String) {
+    /// Display name shown in the grid: e.g. "MyScript01"
+    var scriptName: String
+
+    /// Real source filename for later processing (NOT shown in grid)
+    var sourceFileName: String { url.lastPathComponent }
+
+    init(id: UUID = UUID(), url: URL, scriptName: String) {
         self.id = id
         self.url = url
-        self.title = title
+        self.scriptName = scriptName
     }
 }

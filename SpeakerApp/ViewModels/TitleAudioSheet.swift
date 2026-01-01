@@ -2,25 +2,31 @@
 //  TitleAudioSheet.swift
 //  SpeakerApp
 //
-//  Popup sheet to set the display title for the selected mp3.
+//  Popup sheet to set the display script name (MyScript01...).
+//  Model keeps the real file URL/filename for later edit processing.
 //
 
 import SwiftUI
 
 struct TitleAudioSheet: View {
     let fileURL: URL
+    let suggestedName: String
     let onCancel: () -> Void
     let onSave: (String) -> Void
 
-    @State private var title: String
+    @State private var name: String
 
-    init(fileURL: URL, onCancel: @escaping () -> Void, onSave: @escaping (String) -> Void) {
+    init(
+        fileURL: URL,
+        suggestedName: String,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (String) -> Void
+    ) {
         self.fileURL = fileURL
+        self.suggestedName = suggestedName
         self.onCancel = onCancel
         self.onSave = onSave
-
-        let defaultTitle = fileURL.deletingPathExtension().lastPathComponent
-        _title = State(initialValue: defaultTitle)
+        _name = State(initialValue: suggestedName) // ✅ default to MyScript01 pattern
     }
 
     var body: some View {
@@ -29,8 +35,9 @@ struct TitleAudioSheet: View {
                 .font(.title2)
                 .fontWeight(.semibold)
 
+            // Optional: show the real file name here (not in grid)
             VStack(alignment: .leading, spacing: 6) {
-                Text("File")
+                Text("Selected file (stored, not shown in grid)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -40,18 +47,18 @@ struct TitleAudioSheet: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("Title")
+                Text("Script name")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
-                TextField("Enter title", text: $title)
+                TextField("MyScript01", text: $name)
                     .textFieldStyle(.roundedBorder)
             }
 
             HStack {
                 Spacer()
                 Button("Cancel") { onCancel() }
-                Button("Save") { onSave(title) }
+                Button("Save") { onSave(name) }
                     .buttonStyle(.borderedProminent)
             }
             .padding(.top, 6)
@@ -64,6 +71,7 @@ struct TitleAudioSheet: View {
 #Preview {
     TitleAudioSheet(
         fileURL: URL(fileURLWithPath: "/Users/test/Downloads/example.mp3"),
+        suggestedName: "MyScript01",
         onCancel: {},
         onSave: { _ in }
     )
