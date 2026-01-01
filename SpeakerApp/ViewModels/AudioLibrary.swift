@@ -84,14 +84,14 @@ final class AudioLibrary: ObservableObject {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[idx]
 
-        // 1) Remove internal stored audio file
         try? storage.deleteStoredFile(relativePath: item.storedRelativePath)
-
-        // 2) Remove transcript record
         transcriptStore.delete(itemID: item.id)
 
-        // 3) Remove from list + persist
+        // ✅ delete manual cut plan + sentence edits
+        CutPlanStore.shared.delete(itemID: item.id)
+
         items.remove(at: idx)
         try? store.save(items)
     }
+
 }

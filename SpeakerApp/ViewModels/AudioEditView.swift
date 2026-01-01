@@ -10,6 +10,9 @@ struct AudioEditView: View {
     @StateObject private var playback = AudioPlaybackManager()
     @StateObject private var transcriptVM = TranscriptViewModel()
 
+    @State private var selectedChunk: SentenceChunk? = nil
+    @State private var editingText: String = ""
+
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
     }
@@ -39,6 +42,25 @@ struct AudioEditView: View {
             transcriptVM.loadIfAvailable(itemID: item.id)
             playback.loadIfNeeded(url: storedMP3URL)
         }
+        .sheet(item: $selectedChunk) { chunk in
+            SentenceEditSheet(
+                chunk: chunk,
+                audioURL: storedMP3URL,
+                words: transcriptVM.words,
+                editedText: Binding(
+                    get: { editingText },
+                    set: { editingText = $0 }
+                ),
+                onAddPauseTime: { t in
+                    transcriptVM.addManualCutTime(itemID: item.id, time: t)
+                    // also persist the updated text immediately (so emoji doesn't disappear)
+                    transcriptVM.updateSentenceEdit(itemID: item.id, chunkID: chunk.id, newText: editingText)
+                },
+                onSave: {
+                    transcriptVM.updateSentenceEdit(itemID: item.id, chunkID: chunk.id, newText: editingText)
+                }
+            )
+        }
     }
 
     private var background: some View {
@@ -65,10 +87,7 @@ struct AudioEditView: View {
             .buttonStyle(.bordered)
 
             Spacer()
-
-            Text("Edit")
-                .font(.headline)
-
+            Text("Edit").font(.headline)
             Spacer()
 
             Rectangle().fill(.clear).frame(width: 44, height: 44)
@@ -99,18 +118,14 @@ struct AudioEditView: View {
         VStack(spacing: 10) {
             VStack(spacing: 10) {
                 HStack(spacing: 12) {
-                    Button {
-                        playback.togglePlay(url: storedMP3URL)
-                    } label: {
+                    Button { playback.togglePlay(url: storedMP3URL) } label: {
                         Label(playback.isPlaying ? "Pause" : "Play",
                               systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
 
-                    Button {
-                        playback.stop()
-                    } label: {
+                    Button { playback.stop() } label: {
                         Label("Stop", systemImage: "stop.fill")
                             .frame(maxWidth: .infinity)
                     }
@@ -119,8 +134,11 @@ struct AudioEditView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        // ✅ Use SAME chunks as UI so highlighting works
-                        playback.togglePartialPlay(url: storedMP3URL, chunks: transcriptVM.sentenceChunks)
+                        playback.togglePartialPlay(
+                            url: storedMP3URL,
+                            chunks: transcriptVM.sentenceChunks,
+                            manualCutTimes: transcriptVM.manualCutTimes
+                        )
                     } label: {
                         Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
                               systemImage: "scissors")
@@ -129,9 +147,7 @@ struct AudioEditView: View {
                     .buttonStyle(.bordered)
                     .disabled(transcriptVM.sentenceChunks.isEmpty || transcriptVM.isTranscribing)
 
-                    Button {
-                        playback.cycleLoopCount()
-                    } label: {
+                    Button { playback.cycleLoopCount() } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "repeat")
                             Text("×\(playback.loopCount)")
@@ -161,7 +177,7 @@ struct AudioEditView: View {
                         await transcriptVM.transcribeFromMP3(
                             itemID: item.id,
                             mp3URL: storedMP3URL,
-                            languageCode: "en",   // "es" or "pt"
+                            languageCode: "en",
                             model: "base",
                             force: transcriptVM.hasCachedTranscript
                         )
@@ -198,7 +214,7 @@ struct AudioEditView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            // ✅ Interactive sentence list (tap to play that segment)
+            // Sentence list (tap -> open popup)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if transcriptVM.sentenceChunks.isEmpty {
@@ -208,14 +224,12 @@ struct AudioEditView: View {
                     } else {
                         ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
                             let isActive = (playback.currentSentenceID == chunk.id)
+                            let textToShow = transcriptVM.displayText(for: chunk)
 
                             Button {
-                                playback.playSegmentOnce(
-                                    url: storedMP3URL,
-                                    start: chunk.start,
-                                    end: chunk.end,
-                                    sentenceID: chunk.id
-                                )
+                                // open sheet, preload editing text from persisted edits (or default)
+                                editingText = textToShow
+                                selectedChunk = chunk
                             } label: {
                                 HStack(alignment: .top, spacing: 10) {
                                     Text("\(idx + 1).")
@@ -223,8 +237,8 @@ struct AudioEditView: View {
                                         .foregroundStyle(.secondary)
                                         .frame(width: 28, alignment: .trailing)
 
-                                    Text(chunk.text)
-                                        .foregroundStyle(isActive ? .orange : .primary) // ✅ only color changes
+                                    Text(textToShow)
+                                        .foregroundStyle(isActive ? .orange : .primary)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
                                 .padding(12)
@@ -268,7 +282,7 @@ struct AudioEditView: View {
 #Preview {
     AudioEditView(item: AudioItem(
         scriptName: "MyScript01",
-        originalFileName: "example_long_long_long.mp3",
+        originalFileName: "example.mp3",
         storedFileName: "example.mp3",
         storedRelativePath: "example.mp3"
     ), onClose: {})

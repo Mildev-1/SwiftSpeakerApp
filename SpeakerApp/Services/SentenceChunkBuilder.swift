@@ -1,10 +1,7 @@
 import Foundation
 
 enum SentenceChunkBuilder {
-    // Sentence ends
     private static let enders: Set<Character> = [".", "?", "!", "…"]
-
-    // Punctuation that should NOT have a leading space
     private static let noSpaceBefore: Set<Character> = [".", ",", "?", "!", "…", ";", ":", ")", "]", "}", "\"", "”", "’"]
 
     static func build(from words: [WordTiming]) -> [SentenceChunk] {
@@ -38,10 +35,7 @@ enum SentenceChunkBuilder {
     private static func joinWords(_ tokens: [String]) -> String {
         var out = ""
         for t in tokens where !t.isEmpty {
-            if out.isEmpty {
-                out = t
-                continue
-            }
+            if out.isEmpty { out = t; continue }
             if let first = t.first, noSpaceBefore.contains(first) {
                 out += t
             } else {

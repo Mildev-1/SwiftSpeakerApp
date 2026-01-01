@@ -10,16 +10,13 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var isLoaded: Bool = false
     @Published private(set) var isPlaying: Bool = false
 
-    // default = 10, hard limit 50
     @Published private(set) var loopCount: Int = 10
 
-    // Partial play state
     @Published private(set) var isPartialPlaying: Bool = false
     @Published private(set) var partialIndex: Int = 0
     @Published private(set) var partialTotal: Int = 0
 
-    // Highlight currently played sentence (tap OR partial)
-    @Published private(set) var currentSentenceID: UUID? = nil
+    @Published private(set) var currentSentenceID: String? = nil
 
     @Published var errorMessage: String? = nil
 
@@ -29,9 +26,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     private var partialTask: Task<Void, Never>?
     private var singleSegmentTask: Task<Void, Never>?
 
-    // Padding to avoid clipping last phoneme / first consonant
-    private let headPad: Double = 0.02   // 20ms earlier start
-    private let tailPad: Double = 0.12   // 120ms extra at end
+    private let headPad: Double = 0.02
+    private let tailPad: Double = 0.12
 
     func loadIfNeeded(url: URL) {
         if loadedURL == url, player != nil { return }
@@ -113,9 +109,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         singleSegmentTask = nil
     }
 
-    // MARK: - Tap a sentence: play only its segment once
-
-    func playSegmentOnce(url: URL, start: Double, end: Double, sentenceID: UUID? = nil) {
+    func playSegmentOnce(url: URL, start: Double, end: Double, sentenceID: String? = nil) {
         stopPartialPlayback()
         cancelSingleSegment()
 
@@ -154,9 +148,9 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
     }
 
-    // MARK: - Partial playback (uses SAME chunks as UI so highlighting works)
+    // MARK: - Partial playback with manual overlay cuts
 
-    func togglePartialPlay(url: URL, chunks: [SentenceChunk]) {
+    func togglePartialPlay(url: URL, chunks: [SentenceChunk], manualCutTimes: [Double]) {
         cancelSingleSegment()
         currentSentenceID = nil
 
@@ -165,10 +159,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             stop()
             return
         }
-        startPartialPlayback(url: url, chunks: chunks)
+        startPartialPlayback(url: url, chunks: chunks, manualCutTimes: manualCutTimes)
     }
 
-    private func startPartialPlayback(url: URL, chunks: [SentenceChunk]) {
+    private func startPartialPlayback(url: URL, chunks: [SentenceChunk], manualCutTimes: [Double]) {
         stop()
 
         loadIfNeeded(url: url)
@@ -186,6 +180,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         partialTotal = chunks.count
         errorMessage = nil
 
+        let sortedManual = manualCutTimes.sorted()
+
         partialTask?.cancel()
         partialTask = Task { [weak self] in
             guard let self else { return }
@@ -195,16 +191,37 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
                 await MainActor.run {
                     self.partialIndex = idx + 1
-                    self.currentSentenceID = chunk.id   // ✅ highlights UI row
+                    self.currentSentenceID = chunk.id
                 }
 
-                let ok = await self.playSegment(start: chunk.start, end: chunk.end, with: url)
-                if !ok || Task.isCancelled { break }
+                // Build subsegments = [sentence start .. manual cut .. manual cut .. sentence end]
+                let eps = 0.03
+                let cutsInSentence = sortedManual
+                    .filter { $0 > (chunk.start + eps) && $0 < (chunk.end - eps) }
+                    .sorted()
 
-                if idx < chunks.count - 1 {
-                    await self.beep()
-                    try? await Task.sleep(nanoseconds: 120_000_000)
+                var points: [Double] = [chunk.start]
+                points.append(contentsOf: cutsInSentence)
+                points.append(chunk.end)
+
+                // Play each subsegment, beep between each cut (including manual ones)
+                for j in 0..<(points.count - 1) {
+                    let segStart = points[j]
+                    let segEnd = points[j + 1]
+
+                    let ok = await self.playSegment(start: segStart, end: segEnd, with: url)
+                    if !ok || Task.isCancelled { break }
+
+                    // beep between pieces (not after very last piece in entire run)
+                    let isLastSentence = (idx == chunks.count - 1)
+                    let isLastPieceInSentence = (j == points.count - 2)
+                    if !(isLastSentence && isLastPieceInSentence) {
+                        await self.beep()
+                        try? await Task.sleep(nanoseconds: 120_000_000)
+                    }
                 }
+
+                if Task.isCancelled { break }
             }
 
             await MainActor.run {
@@ -265,7 +282,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         #endif
     }
 
-    // MARK: AVAudioPlayerDelegate
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             self.isPlaying = false
