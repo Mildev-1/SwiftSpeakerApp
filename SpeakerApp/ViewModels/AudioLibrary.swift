@@ -12,6 +12,7 @@ final class AudioLibrary: ObservableObject {
 
     private let store = AudioLibraryStore.shared
     private let storage = AudioStorage.shared
+    private let transcriptStore = TranscriptStore.shared
 
     init() {
         loadFromDisk()
@@ -21,9 +22,15 @@ final class AudioLibrary: ObservableObject {
         do {
             let loaded = try store.load()
             // prune entries if the stored file is missing
-            items = loaded.filter { item in
+            let pruned = loaded.filter { item in
                 let url = storage.urlForStoredFile(relativePath: item.storedRelativePath)
                 return FileManager.default.fileExists(atPath: url.path)
+            }
+            items = pruned
+
+            // ✅ keep persisted DB consistent with prune result
+            if pruned.count != loaded.count {
+                try? store.save(pruned)
             }
         } catch {
             items = []
@@ -70,5 +77,21 @@ final class AudioLibrary: ObservableObject {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         items[idx].scriptName = name
         do { try store.save(items) } catch { }
+    }
+
+    /// ✅ Deletes row + internal audio + transcript + persists DB.
+    func deleteItem(id: UUID) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        let item = items[idx]
+
+        // 1) Remove internal stored audio file
+        try? storage.deleteStoredFile(relativePath: item.storedRelativePath)
+
+        // 2) Remove transcript record
+        transcriptStore.delete(itemID: item.id)
+
+        // 3) Remove from list + persist
+        items.remove(at: idx)
+        try? store.save(items)
     }
 }

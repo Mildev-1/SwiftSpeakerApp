@@ -20,6 +20,9 @@ struct ContentView: View {
     // Edit screen state (full-screen overlay)
     @State private var editingItem: AudioItem? = nil
 
+    // ✅ delete confirmation state
+    @State private var pendingDeleteItem: AudioItem? = nil
+
     private var mp3Type: UTType {
         UTType(filenameExtension: "mp3") ?? .audio
     }
@@ -27,27 +30,34 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                // Main screen
                 VStack(spacing: 12) {
                     header
 
-                    ScrollView {
-                        LazyVStack(spacing: 10) {
-                            ForEach(library.items) { item in
-                                AudioGridRowView(
-                                    scriptName: bindingForScriptName(itemID: item.id),
-                                    onEditTapped: {
-                                        withAnimation(.easeInOut(duration: 0.25)) {
-                                            editingItem = item
-                                        }
+                    // ✅ Use List for native swipe actions
+                    List {
+                        ForEach(library.items) { item in
+                            AudioGridRowView(
+                                scriptName: bindingForScriptName(itemID: item.id),
+                                onEditTapped: {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        editingItem = item
                                     }
-                                )
+                                }
+                            )
+                            .listRowSeparator(.hidden)
+                            .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                            .listRowBackground(Color.clear)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button(role: .destructive) {
+                                    pendingDeleteItem = item
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 10)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
                 .padding(.top, 8)
 
@@ -100,6 +110,31 @@ struct ContentView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(alertMessage)
+            }
+            // ✅ Confirmation popup for delete
+            .alert(
+                "Remove this audio?",
+                isPresented: Binding(
+                    get: { pendingDeleteItem != nil },
+                    set: { if !$0 { pendingDeleteItem = nil } }
+                )
+            ) {
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteItem = nil
+                }
+                Button("Delete", role: .destructive) {
+                    guard let item = pendingDeleteItem else { return }
+
+                    // close editor if deleting the opened item
+                    if editingItem?.id == item.id {
+                        withAnimation(.easeInOut(duration: 0.25)) { editingItem = nil }
+                    }
+
+                    library.deleteItem(id: item.id)
+                    pendingDeleteItem = nil
+                }
+            } message: {
+                Text("This will delete the internal audio file copy and its transcription data. This cannot be undone.")
             }
         }
     }

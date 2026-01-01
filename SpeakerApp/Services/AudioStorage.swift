@@ -122,4 +122,12 @@ final class AudioStorage {
             i += 1
         }
     }
+    
+    /// Deletes a stored audio file from internal storage (AudioFiles folder).
+    func deleteStoredFile(relativePath: String) throws {
+        let url = urlForStoredFile(relativePath: relativePath)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+    }
 }
