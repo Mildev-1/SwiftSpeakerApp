@@ -16,7 +16,6 @@ final class AudioLibrary: ObservableObject {
     func nextSuggestedScriptName() -> String {
         let prefix = "MyScript"
 
-        // Find max N in existing names that match MyScriptNN...
         var maxNumber = 0
         for item in items {
             let name = item.scriptName
@@ -28,7 +27,6 @@ final class AudioLibrary: ObservableObject {
         }
 
         let next = maxNumber + 1
-        // 01..99 => 2 digits; 100+ => no truncation
         let formatted = next < 100 ? String(format: "%02d", next) : "\(next)"
         return "\(prefix)\(formatted)"
     }
@@ -37,5 +35,10 @@ final class AudioLibrary: ObservableObject {
         let trimmed = scriptName.trimmingCharacters(in: .whitespacesAndNewlines)
         let finalName = trimmed.isEmpty ? nextSuggestedScriptName() : trimmed
         items.append(AudioItem(url: url, scriptName: finalName))
+    }
+
+    func updateScriptName(id: UUID, name: String) {
+        guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
+        items[idx].scriptName = name
     }
 }

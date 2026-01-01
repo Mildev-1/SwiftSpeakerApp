@@ -19,11 +19,6 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
 
-    private let columns: [GridItem] = [
-        GridItem(.flexible(), spacing: 12, alignment: .leading),
-        GridItem(.fixed(80), spacing: 12, alignment: .trailing)
-    ]
-
     private var mp3Type: UTType {
         UTType(filenameExtension: "mp3") ?? .audio
     }
@@ -33,27 +28,19 @@ struct ContentView: View {
             header
 
             ScrollView {
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 10) {
-                    Text("Name")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text("")
-
-                    Divider().gridCellColumns(2)
-
+                LazyVStack(spacing: 10) {
                     ForEach(library.items) { item in
                         AudioGridRowView(
-                            title: item.scriptName,   // ✅ grid shows ONLY scriptName
+                            scriptName: bindingForScriptName(itemID: item.id),
                             onEditTapped: {
-                                // mock for now
-                                // later you can use item.url / item.sourceFileName here
+                                // Mock for now (later you can use item.url / item.sourceFileName)
                             }
                         )
-                        Divider().gridCellColumns(2)
                     }
                 }
                 .padding(.horizontal)
-                .padding(.top, 8)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
         .padding(.top, 8)
@@ -111,6 +98,17 @@ struct ContentView: View {
         .padding(.horizontal)
     }
 
+    private func bindingForScriptName(itemID: UUID) -> Binding<String> {
+        Binding(
+            get: {
+                library.items.first(where: { $0.id == itemID })?.scriptName ?? ""
+            },
+            set: { newValue in
+                library.updateScriptName(id: itemID, name: newValue)
+            }
+        )
+    }
+
     private func handleImporterResult(_ result: Result<[URL], Error>) {
         switch result {
         case .success(let urls):
@@ -123,7 +121,7 @@ struct ContentView: View {
             }
 
             pendingURL = url
-            pendingSuggestedName = library.nextSuggestedScriptName() // ✅ MyScript01...
+            pendingSuggestedName = library.nextSuggestedScriptName()
             isShowingTitleSheet = true
 
         case .failure(let error):

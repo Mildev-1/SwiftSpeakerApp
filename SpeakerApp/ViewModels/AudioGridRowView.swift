@@ -2,29 +2,31 @@
 //  AudioGridRowView.swift
 //  SpeakerApp
 //
-//  A single row rendered into a 2-column LazyVGrid.
-//  Uses Group to emit two "cells": Title + Edit button.
+//  Full-width row: editable script name + Edit button.
 //
 
 import SwiftUI
 
 struct AudioGridRowView: View {
-    let title: String
+    @Binding var scriptName: String
     let onEditTapped: () -> Void
 
     var body: some View {
-        Group {
-            Text(title)
-                .lineLimit(1)
-                .truncationMode(.tail)
+        HStack(spacing: 12) {
+            TextField("MyScript01", text: $scriptName)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: .infinity)
 
-            Button {
+            Button("Edit") {
                 onEditTapped()
-            } label: {
-                Text("Edit")
             }
             .buttonStyle(.bordered)
-            .disabled(true) // mock for now
+            // keep mock behavior: if you want it visually enabled but not functional:
+            // .disabled(true)
         }
+        .padding(12)
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
