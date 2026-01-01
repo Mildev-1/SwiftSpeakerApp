@@ -3,7 +3,7 @@
 //  SpeakerApp
 //
 //  Popup sheet to set the display script name (MyScript01...).
-//  Model keeps the real file URL/filename for later edit processing.
+//  Adds centered layout, proper margins, and truncation for long filenames.
 //
 
 import SwiftUI
@@ -26,51 +26,65 @@ struct TitleAudioSheet: View {
         self.suggestedName = suggestedName
         self.onCancel = onCancel
         self.onSave = onSave
-        _name = State(initialValue: suggestedName) // ✅ default to MyScript01 pattern
+        _name = State(initialValue: suggestedName)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Add Audio")
-                .font(.title2)
-                .fontWeight(.semibold)
+        VStack {
+            VStack(spacing: 16) {
+                Text("Add Audio")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+                    .multilineTextAlignment(.center)
 
-            // Optional: show the real file name here (not in grid)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Selected file (stored, not shown in grid)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                VStack(spacing: 8) {
+                    Text("Selected file")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
 
-                Text(fileURL.lastPathComponent)
-                    .font(.subheadline)
-                    .lineLimit(2)
+                    Text(fileURL.lastPathComponent)
+                        .font(.subheadline)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(4)            // ✅ 4 lines max
+                        .truncationMode(.tail)   // ✅ ... at end
+                        .frame(maxWidth: 420)
+                }
+
+                VStack(alignment: .center, spacing: 8) {
+                    Text("Script name")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+
+                    TextField("MyScript01", text: $name)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 320)         // ✅ centered field width
+                }
+
+                HStack(spacing: 12) {
+                    Button("Cancel") { onCancel() }
+                        .buttonStyle(.bordered)
+
+                    Button("Save") { onSave(name) }
+                        .buttonStyle(.borderedProminent)
+                }
+                .padding(.top, 6)
             }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Script name")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                TextField("MyScript01", text: $name)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") { onCancel() }
-                Button("Save") { onSave(name) }
-                    .buttonStyle(.borderedProminent)
-            }
-            .padding(.top, 6)
+            .padding(24)                              // ✅ real margins inside popup
+            .frame(maxWidth: 520)                     // ✅ keeps content centered/nice
+            .background(.regularMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(24)                              // ✅ outer margins (sheet edges)
         }
-        .padding(20)
-        .frame(minWidth: 420)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.clear)
     }
 }
 
 #Preview {
     TitleAudioSheet(
-        fileURL: URL(fileURLWithPath: "/Users/test/Downloads/example.mp3"),
+        fileURL: URL(fileURLWithPath: "/Users/test/Downloads/this_is_a_very_long_file_name_that_should_be_cut_off_after_two_lines_and_then_show_dots.mp3"),
         suggestedName: "MyScript01",
         onCancel: {},
         onSave: { _ in }
