@@ -2,8 +2,6 @@
 //  AudioPlaybackManager.swift
 //  SpeakerApp
 //
-//  Playback + repeat cycling (1...50) using a repeat icon button.
-//
 
 import Foundation
 import AVFoundation
@@ -14,8 +12,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var isLoaded: Bool = false
     @Published private(set) var isPlaying: Bool = false
 
-    // ✅ UI uses only repeat icon; loops are cycled by tapping it (1...50 hard limit)
-    @Published private(set) var loopCount: Int = 1
+    // ✅ default = 10, hard limit 50
+    @Published private(set) var loopCount: Int = 10
 
     @Published var errorMessage: String? = nil
 
@@ -24,11 +22,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
     func loadIfNeeded(url: URL) {
         if loadedURL == url, player != nil { return }
-        do {
-            try load(url: url)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        do { try load(url: url) } catch { errorMessage = error.localizedDescription }
     }
 
     private func load(url: URL) throws {
@@ -61,13 +55,12 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     private func applyLoopCount() {
-        // AVAudioPlayer.numberOfLoops: 0 = once, 1 = twice...
         let clamped = min(max(loopCount, 1), 50)
-        loopCount = clamped // safe: this setter does NOT recurse anymore
+        loopCount = clamped
         player?.numberOfLoops = clamped - 1
     }
 
-    // ✅ Repeat icon action: cycles 1 → 2 → ... → 50 → 1
+    // Tap repeat: +1 each time, wrap after 50 back to 1
     func cycleLoopCount() {
         let next = (loopCount >= 50) ? 1 : (loopCount + 1)
         loopCount = next
@@ -75,7 +68,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     func togglePlay(url: URL) {
-        // Ensure loaded
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
 
@@ -95,10 +87,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         isPlaying = false
     }
 
-    // MARK: AVAudioPlayerDelegate
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in
-            self.isPlaying = false
-        }
+        Task { @MainActor in self.isPlaying = false }
     }
 }

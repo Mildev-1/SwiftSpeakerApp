@@ -17,7 +17,7 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
 
-    // ✅ New: edit sheet
+    // Edit screen state (full-screen overlay)
     @State private var editingItem: AudioItem? = nil
 
     private var mp3Type: UTType {
@@ -26,26 +26,45 @@ struct ContentView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                header
+            ZStack {
+                // Main screen
+                VStack(spacing: 12) {
+                    header
 
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        ForEach(library.items) { item in
-                            AudioGridRowView(
-                                scriptName: bindingForScriptName(itemID: item.id),
-                                onEditTapped: {
-                                    editingItem = item
-                                }
-                            )
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            ForEach(library.items) { item in
+                                AudioGridRowView(
+                                    scriptName: bindingForScriptName(itemID: item.id),
+                                    onEditTapped: {
+                                        withAnimation(.easeInOut(duration: 0.25)) {
+                                            editingItem = item
+                                        }
+                                    }
+                                )
+                            }
                         }
+                        .padding(.horizontal)
+                        .padding(.vertical, 10)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .padding(.horizontal)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .padding(.top, 8)
+
+                // Full screen edit view that slides in from LEFT
+                if let item = editingItem {
+                    AudioEditView(
+                        item: item,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                editingItem = nil
+                            }
+                        }
+                    )
+                    .transition(.move(edge: .leading))
+                    .zIndex(10)
                 }
             }
-            .padding(.top, 8)
             .fileImporter(
                 isPresented: $isShowingImporter,
                 allowedContentTypes: [mp3Type],
@@ -76,10 +95,6 @@ struct ContentView: View {
                         }
                     )
                 }
-            }
-            // ✅ New: Audio playback sheet when Edit is clicked
-            .sheet(item: $editingItem) { item in
-                AudioEditView(item: item)
             }
             .alert("Cannot Add File", isPresented: $showAlert) {
                 Button("OK", role: .cancel) {}
@@ -112,12 +127,8 @@ struct ContentView: View {
 
     private func bindingForScriptName(itemID: UUID) -> Binding<String> {
         Binding(
-            get: {
-                library.items.first(where: { $0.id == itemID })?.scriptName ?? ""
-            },
-            set: { newValue in
-                library.updateScriptName(id: itemID, name: newValue)
-            }
+            get: { library.items.first(where: { $0.id == itemID })?.scriptName ?? "" },
+            set: { newValue in library.updateScriptName(id: itemID, name: newValue) }
         )
     }
 
@@ -125,13 +136,11 @@ struct ContentView: View {
         switch result {
         case .success(let urls):
             guard let url = urls.first else { return }
-
             guard url.pathExtension.lowercased() == "mp3" else {
                 alertMessage = "Please choose an .mp3 file."
                 showAlert = true
                 return
             }
-
             pendingURL = url
             pendingSuggestedName = library.nextSuggestedScriptName()
             isShowingTitleSheet = true
