@@ -1,31 +1,26 @@
-//
-//  AudioEditView.swift
-//  SpeakerApp
-//
-
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct AudioEditView: View {
     let item: AudioItem
     let onClose: () -> Void
 
     @StateObject private var playback = AudioPlaybackManager()
+    @StateObject private var transcriptVM = TranscriptViewModel()
 
-    private var storedURL: URL {
+    private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
     }
 
     var body: some View {
         ZStack {
-            // Fullscreen background
             #if os(macOS)
-            Color(NSColor.windowBackgroundColor)
-                .ignoresSafeArea()
+            Color(NSColor.windowBackgroundColor).ignoresSafeArea()
             #else
-            Color(.systemBackground)
-                .ignoresSafeArea()
+            Color(.systemBackground).ignoresSafeArea()
             #endif
-
 
             VStack(spacing: 0) {
                 // Top bar
@@ -41,111 +36,123 @@ struct AudioEditView: View {
                     .buttonStyle(.bordered)
 
                     Spacer()
-
-                    Text("Edit")
-                        .font(.headline)
-
+                    Text("Edit").font(.headline)
                     Spacer()
 
-                    // placeholder to balance layout
-                    Rectangle()
-                        .fill(.clear)
-                        .frame(width: 44, height: 44)
+                    Rectangle().fill(.clear).frame(width: 44, height: 44)
                 }
                 .padding(.horizontal)
                 .padding(.top, 12)
 
-                // Content
-                VStack(spacing: 18) {
-                    Text(item.scriptName)
-                        .font(.title2)
-                        .fontWeight(.semibold)
-                        .multilineTextAlignment(.center)
-
-                    Text(item.originalFileName)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.center)
-                        .lineLimit(4)
-                        .truncationMode(.tail)
-                        .padding(.horizontal, 16)
-
-                    HStack(spacing: 12) {
-                        Button {
-                            playback.togglePlay(url: storedURL)
-                        } label: {
-                            Label(
-                                playback.isPlaying ? "Pause" : "Play",
-                                systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
-                            )
-                            .frame(minWidth: 110)
-                        }
-                        .buttonStyle(.borderedProminent)
-
-                        Button {
-                            playback.stop()
-                        } label: {
-                            Label("Stop", systemImage: "stop.fill")
-                                .frame(minWidth: 90)
-                        }
-                        .buttonStyle(.bordered)
-
-                        // Repeat icon only (+1 each tap, default 10, max 50 hardcoded)
-                        Button {
-                            playback.cycleLoopCount()
-                        } label: {
-                            ZStack(alignment: .bottomTrailing) {
-                                Image(systemName: "repeat")
-                                    .font(.title3)
-                                    .padding(10)
-
-                                Text("×\(playback.loopCount)")
-                                    .font(.caption2)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.thinMaterial)
-                                    .clipShape(Capsule())
-                                    .offset(x: 6, y: 6)
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityLabel("Repeat \(playback.loopCount) times (max 50)")
-                    }
-
-                    if let msg = playback.errorMessage {
-                        Text(msg)
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                ScrollView {
+                    VStack(spacing: 18) {
+                        Text(item.scriptName)
+                            .font(.title2)
+                            .fontWeight(.semibold)
                             .multilineTextAlignment(.center)
-                            .padding(.top, 4)
-                            .padding(.horizontal, 16)
-                    }
 
-                    Spacer()
+                        Text(item.originalFileName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .lineLimit(2)
+                            .truncationMode(.tail)
+                            .padding(.horizontal, 16)
+
+                        // Playback controls (unchanged)
+                        HStack(spacing: 12) {
+                            Button {
+                                playback.togglePlay(url: storedMP3URL)
+                            } label: {
+                                Label(
+                                    playback.isPlaying ? "Pause" : "Play",
+                                    systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
+                                )
+                                .frame(minWidth: 110)
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button {
+                                playback.stop()
+                            } label: {
+                                Label("Stop", systemImage: "stop.fill")
+                                    .frame(minWidth: 90)
+                            }
+                            .buttonStyle(.bordered)
+
+                            Button {
+                                playback.cycleLoopCount() // default now should be 10 in manager
+                            } label: {
+                                ZStack(alignment: .bottomTrailing) {
+                                    Image(systemName: "repeat")
+                                        .font(.title3)
+                                        .padding(10)
+
+                                    Text("×\(playback.loopCount)")
+                                        .font(.caption2)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(.thinMaterial)
+                                        .clipShape(Capsule())
+                                        .offset(x: 6, y: 6)
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        // ✅ Transcribe section
+                        VStack(spacing: 10) {
+                            HStack {
+                                Button {
+                                    Task { await transcriptVM.transcribeFromMP3(mp3URL: storedMP3URL, locale: Locale(identifier: "en-US")) }
+                                } label: {
+                                    Label(transcriptVM.isTranscribing ? "Transcribing…" : "Extract Text",
+                                          systemImage: "text.quote")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(transcriptVM.isTranscribing)
+
+                                Spacer()
+
+                                Text("Chunks: \(transcriptVM.chunkIndex)/\(transcriptVM.chunksTotal)  •  Words: \(transcriptVM.words.count)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            if let err = transcriptVM.errorMessage {
+                                Text(err)
+                                    .font(.footnote)
+                                    .foregroundStyle(.red)
+                                    .multilineTextAlignment(.leading)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            // Scrollable text field
+                            TextEditor(text: .constant(transcriptVM.transcriptText))
+                                .font(.body)
+                                .frame(minHeight: 220)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .stroke(.quaternary, lineWidth: 1)
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        .padding(.top, 6)
+
+                        Spacer(minLength: 30)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 20)
+                    .frame(maxWidth: 700)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.top, 24)
-                .frame(maxWidth: 700)
-                .frame(maxWidth: .infinity)
             }
         }
         .onAppear {
-            // Preload (no autoplay)
-            playback.loadIfNeeded(url: storedURL)
+            playback.loadIfNeeded(url: storedMP3URL)
         }
         .onDisappear {
             playback.stop()
         }
     }
-}
-
-#Preview {
-    AudioEditView(
-        item: AudioItem(
-            scriptName: "MyScript01",
-            originalFileName: "example_long_long_long.mp3",
-            storedFileName: "example.mp3",
-            storedRelativePath: "example.mp3"
-        ),
-        onClose: {}
-    )
 }
