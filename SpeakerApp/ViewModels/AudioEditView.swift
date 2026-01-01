@@ -16,172 +16,220 @@ struct AudioEditView: View {
 
     var body: some View {
         ZStack {
-            #if os(macOS)
-            Color(NSColor.windowBackgroundColor).ignoresSafeArea()
-            #else
-            Color(.systemBackground).ignoresSafeArea()
-            #endif
+            background
 
             VStack(spacing: 0) {
-                // Top bar
-                HStack {
-                    Button {
-                        playback.stop()
-                        onClose()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.title3)
-                            .padding(10)
-                    }
-                    .buttonStyle(.bordered)
-
-                    Spacer()
-                    Text("Edit").font(.headline)
-                    Spacer()
-
-                    Rectangle().fill(.clear).frame(width: 44, height: 44)
-                }
-                .padding(.horizontal)
-                .padding(.top, 12)
+                topBar
 
                 ScrollView {
                     VStack(spacing: 18) {
-                        Text(item.scriptName)
-                            .font(.title2)
-                            .fontWeight(.semibold)
-                            .multilineTextAlignment(.center)
-
-                        Text(item.originalFileName)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .lineLimit(2)
-                            .truncationMode(.tail)
-                            .padding(.horizontal, 16)
-
-                        // Playback controls
-                        HStack(spacing: 12) {
-                            Button {
-                                playback.togglePlay(url: storedMP3URL)
-                            } label: {
-                                Label(
-                                    playback.isPlaying ? "Pause" : "Play",
-                                    systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
-                                )
-                                .frame(minWidth: 110)
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button {
-                                playback.stop()
-                            } label: {
-                                Label("Stop", systemImage: "stop.fill")
-                                    .frame(minWidth: 90)
-                            }
-                            .buttonStyle(.bordered)
-
-                            Button {
-                                playback.cycleLoopCount()
-                            } label: {
-                                ZStack(alignment: .bottomTrailing) {
-                                    Image(systemName: "repeat")
-                                        .font(.title3)
-                                        .padding(10)
-
-                                    Text("×\(playback.loopCount)")
-                                        .font(.caption2)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.thinMaterial)
-                                        .clipShape(Capsule())
-                                        .offset(x: 6, y: 6)
-                                }
-                            }
-                            .buttonStyle(.bordered)
-                        }
-
-                        // ✅ Transcribe section (cached + re-transcribe)
-                        VStack(spacing: 10) {
-                            HStack {
-                                Button {
-                                    Task {
-                                        await transcriptVM.transcribeFromMP3(
-                                            itemID: item.id,
-                                            mp3URL: storedMP3URL,
-                                            languageCode: "en",   // "es" or "pt"
-                                            model: "base",
-                                            force: transcriptVM.hasCachedTranscript // cached -> re-transcribe
-                                        )
-                                    }
-                                } label: {
-                                    Label(
-                                        transcriptVM.isTranscribing
-                                        ? "Transcribing…"
-                                        : (transcriptVM.hasCachedTranscript ? "Re-Transcribe" : "Extract Text"),
-                                        systemImage: "text.quote"
-                                    )
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .disabled(transcriptVM.isTranscribing)
-
-                                Spacer()
-
-                                Text("Words: \(transcriptVM.words.count)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            if !transcriptVM.statusText.isEmpty {
-                                Text(transcriptVM.statusText)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            if let err = transcriptVM.errorMessage {
-                                Text(err)
-                                    .font(.footnote)
-                                    .foregroundStyle(.red)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            // ✅ Scrollable "textbox" with sentence-per-line formatting (UI only)
-                            ScrollView {
-                                Text(transcriptVM.formattedTranscriptForDisplay.isEmpty
-                                     ? "No transcript yet."
-                                     : transcriptVM.formattedTranscriptForDisplay)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .textSelection(.enabled)
-                                    .padding(12)
-                            }
-                            .frame(minHeight: 220)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 12)
-                                    .stroke(.quaternary, lineWidth: 1)
-                            )
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        }
-                        .padding(.top, 6)
-
-                        if let msg = playback.errorMessage {
-                            Text(msg)
-                                .font(.footnote)
-                                .foregroundStyle(.red)
-                                .multilineTextAlignment(.center)
-                                .padding(.top, 4)
-                        }
+                        headerSection
+                        playbackSection
+                        transcriptSection
+                        errorSection
                     }
-                    .padding(.horizontal, 16)
+                    .frame(maxWidth: 720)              // keeps it nice on iPad/mac
+                    .frame(maxWidth: .infinity)        // center inside ScrollView
+                    .padding(.horizontal, 16)          // ✅ main side margins
                     .padding(.vertical, 18)
                 }
             }
         }
         .onAppear {
-            // Load cached transcript immediately if present
             transcriptVM.loadIfAvailable(itemID: item.id)
-
-            // Preload audio (no autoplay)
             playback.loadIfNeeded(url: storedMP3URL)
+        }
+    }
+
+    // MARK: - Pieces
+
+    private var background: some View {
+        Group {
+            #if os(macOS)
+            Color(NSColor.windowBackgroundColor)
+            #else
+            Color(.systemBackground)
+            #endif
+        }
+        .ignoresSafeArea() // background only
+    }
+
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                playback.stop()
+                onClose()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.title3)
+                    .padding(10)
+            }
+            .buttonStyle(.bordered)
+
+            Spacer()
+
+            Text("Edit")
+                .font(.headline)
+
+            Spacer()
+
+            // keep symmetry
+            Rectangle().fill(.clear).frame(width: 44, height: 44)
+        }
+        .padding(.horizontal, 16)   // ✅ margins for top bar
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+    }
+
+    private var headerSection: some View {
+        VStack(spacing: 10) {
+            Text(item.scriptName)
+                .font(.title2)
+                .fontWeight(.semibold)
+                .multilineTextAlignment(.center)
+
+            Text(item.originalFileName)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .padding(.horizontal, 8)
+        }
+    }
+
+    private var playbackSection: some View {
+        VStack(spacing: 10) {
+            // ✅ Two-row layout so it never overflows on iPhone mini
+            VStack(spacing: 10) {
+                HStack(spacing: 12) {
+                    Button {
+                        playback.togglePlay(url: storedMP3URL)
+                    } label: {
+                        Label(playback.isPlaying ? "Pause" : "Play",
+                              systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        playback.stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        playback.togglePartialPlay(url: storedMP3URL, words: transcriptVM.words)
+                    } label: {
+                        Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
+                              systemImage: "scissors")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(transcriptVM.words.isEmpty || transcriptVM.isTranscribing)
+
+                    Button {
+                        playback.cycleLoopCount()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "repeat")
+                            Text("×\(playback.loopCount)")
+                                .font(.callout)
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if playback.isPartialPlaying {
+                Text("Partial: \(playback.partialIndex)/\(max(playback.partialTotal, 1))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var transcriptSection: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Button {
+                    Task {
+                        await transcriptVM.transcribeFromMP3(
+                            itemID: item.id,
+                            mp3URL: storedMP3URL,
+                            languageCode: "en",   // "es" or "pt"
+                            model: "base",
+                            force: transcriptVM.hasCachedTranscript
+                        )
+                    }
+                } label: {
+                    Label(
+                        transcriptVM.isTranscribing
+                        ? "Transcribing…"
+                        : (transcriptVM.hasCachedTranscript ? "Re-Transcribe" : "Extract Text"),
+                        systemImage: "text.quote"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(transcriptVM.isTranscribing)
+
+                Spacer()
+
+                Text("Words: \(transcriptVM.words.count)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !transcriptVM.statusText.isEmpty {
+                Text(transcriptVM.statusText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let err = transcriptVM.errorMessage {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            // ✅ Transcript box with proper padding/margins
+            ScrollView {
+                Text(transcriptVM.formattedTranscriptForDisplay.isEmpty
+                     ? "No transcript yet."
+                     : transcriptVM.formattedTranscriptForDisplay)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(minHeight: 240)
+            .background(.thinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.quaternary, lineWidth: 1)
+            )
+        }
+        .padding(.top, 6)
+    }
+
+    private var errorSection: some View {
+        Group {
+            if let msg = playback.errorMessage {
+                Text(msg)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .padding(.top, 4)
+            }
         }
     }
 }
