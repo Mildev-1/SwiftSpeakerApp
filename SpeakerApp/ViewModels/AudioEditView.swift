@@ -59,7 +59,7 @@ struct AudioEditView: View {
                             .truncationMode(.tail)
                             .padding(.horizontal, 16)
 
-                        // Playback controls (unchanged)
+                        // Playback controls
                         HStack(spacing: 12) {
                             Button {
                                 playback.togglePlay(url: storedMP3URL)
@@ -81,7 +81,7 @@ struct AudioEditView: View {
                             .buttonStyle(.bordered)
 
                             Button {
-                                playback.cycleLoopCount() // default now should be 10 in manager
+                                playback.cycleLoopCount()
                             } label: {
                                 ZStack(alignment: .bottomTrailing) {
                                     Image(systemName: "repeat")
@@ -100,19 +100,26 @@ struct AudioEditView: View {
                             .buttonStyle(.bordered)
                         }
 
+                        // ✅ Transcribe section (cached + re-transcribe)
                         VStack(spacing: 10) {
                             HStack {
                                 Button {
                                     Task {
                                         await transcriptVM.transcribeFromMP3(
+                                            itemID: item.id,
                                             mp3URL: storedMP3URL,
                                             languageCode: "en",   // "es" or "pt"
-                                            model: "base"         // try "tiny" if you want smaller download
+                                            model: "base",
+                                            force: transcriptVM.hasCachedTranscript // cached -> re-transcribe
                                         )
                                     }
                                 } label: {
-                                    Label(transcriptVM.isTranscribing ? "Transcribing…" : "Extract Text",
-                                          systemImage: "text.quote")
+                                    Label(
+                                        transcriptVM.isTranscribing
+                                        ? "Transcribing…"
+                                        : (transcriptVM.hasCachedTranscript ? "Re-Transcribe" : "Extract Text"),
+                                        systemImage: "text.quote"
+                                    )
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .disabled(transcriptVM.isTranscribing)
@@ -124,81 +131,66 @@ struct AudioEditView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            // ✅ Live feedback (prevents “freeze” feeling)
-                            HStack(spacing: 10) {
-                                if transcriptVM.isTranscribing {
-                                    ProgressView()
-                                }
-                                Text(transcriptVM.statusText.isEmpty ? " " : transcriptVM.statusText)
+                            if !transcriptVM.statusText.isEmpty {
+                                Text(transcriptVM.statusText)
                                     .font(.footnote)
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-
-                            // ✅ Model download indicator (uses disk growth as “progress”)
-                            if transcriptVM.isTranscribing {
-                                if let p = transcriptVM.modelProgress, let expected = transcriptVM.modelExpectedBytes {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ProgressView(value: p)
-                                        Text("Model data: \(WhisperModelInfo.formatMB(transcriptVM.modelBytesOnDisk)) / \(WhisperModelInfo.formatMB(expected))")
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                } else {
-                                    Text("Model data: \(WhisperModelInfo.formatMB(transcriptVM.modelBytesOnDisk))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-
-                            HStack {
-                                Button("Reset Whisper Models") {
-                                    WhisperModelReset.resetAll()
-                                }
-                                .buttonStyle(.bordered)
-
-                                Spacer()
-
-                                Text("Use if model download got stuck")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
                             }
 
                             if let err = transcriptVM.errorMessage {
                                 Text(err)
                                     .font(.footnote)
                                     .foregroundStyle(.red)
-                                    .multilineTextAlignment(.leading)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
 
-                            TextEditor(text: .constant(transcriptVM.transcriptText))
-                                .font(.body)
-                                .frame(minHeight: 220)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(.quaternary, lineWidth: 1)
-                                )
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            // ✅ Scrollable "textbox" with sentence-per-line formatting (UI only)
+                            ScrollView {
+                                Text(transcriptVM.formattedTranscriptForDisplay.isEmpty
+                                     ? "No transcript yet."
+                                     : transcriptVM.formattedTranscriptForDisplay)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .textSelection(.enabled)
+                                    .padding(12)
+                            }
+                            .frame(minHeight: 220)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .stroke(.quaternary, lineWidth: 1)
+                            )
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .padding(.top, 6)
 
-
-                        Spacer(minLength: 30)
+                        if let msg = playback.errorMessage {
+                            Text(msg)
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.top, 4)
+                        }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.top, 20)
-                    .frame(maxWidth: 700)
-                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
                 }
             }
         }
         .onAppear {
+            // Load cached transcript immediately if present
+            transcriptVM.loadIfAvailable(itemID: item.id)
+
+            // Preload audio (no autoplay)
             playback.loadIfNeeded(url: storedMP3URL)
         }
-        .onDisappear {
-            playback.stop()
-        }
     }
+}
+
+#Preview {
+    AudioEditView(item: AudioItem(
+        scriptName: "MyScript01",
+        originalFileName: "example_long_long_long.mp3",
+        storedFileName: "example.mp3",
+        storedRelativePath: "example.mp3"
+    ), onClose: {})
 }
