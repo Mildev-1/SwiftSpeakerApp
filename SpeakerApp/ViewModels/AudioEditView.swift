@@ -104,7 +104,12 @@ struct AudioEditView: View {
                         VStack(spacing: 10) {
                             HStack {
                                 Button {
-                                    Task { await transcriptVM.transcribeFromMP3(mp3URL: storedMP3URL, locale: Locale(identifier: "en-US")) }
+                                    Task {
+                                        await transcriptVM.transcribeFromMP3(
+                                            mp3URL: storedMP3URL,
+                                            languageCode: "en"   // "es" for Spanish, "pt" for Portuguese
+                                        )
+                                    }
                                 } label: {
                                     Label(transcriptVM.isTranscribing ? "Transcribing…" : "Extract Text",
                                           systemImage: "text.quote")
@@ -114,7 +119,7 @@ struct AudioEditView: View {
 
                                 Spacer()
 
-                                Text("Chunks: \(transcriptVM.chunkIndex)/\(transcriptVM.chunksTotal)  •  Words: \(transcriptVM.words.count)")
+                                Text("Words: \(transcriptVM.words.count)")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
