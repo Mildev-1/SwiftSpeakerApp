@@ -100,14 +100,14 @@ struct AudioEditView: View {
                             .buttonStyle(.bordered)
                         }
 
-                        // ✅ Transcribe section
                         VStack(spacing: 10) {
                             HStack {
                                 Button {
                                     Task {
                                         await transcriptVM.transcribeFromMP3(
                                             mp3URL: storedMP3URL,
-                                            languageCode: "en"   // "es" for Spanish, "pt" for Portuguese
+                                            languageCode: "en",   // "es" or "pt"
+                                            model: "base"         // try "tiny" if you want smaller download
                                         )
                                     }
                                 } label: {
@@ -123,8 +123,35 @@ struct AudioEditView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-                            
-                            // ✅ Add this row
+
+                            // ✅ Live feedback (prevents “freeze” feeling)
+                            HStack(spacing: 10) {
+                                if transcriptVM.isTranscribing {
+                                    ProgressView()
+                                }
+                                Text(transcriptVM.statusText.isEmpty ? " " : transcriptVM.statusText)
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+
+                            // ✅ Model download indicator (uses disk growth as “progress”)
+                            if transcriptVM.isTranscribing {
+                                if let p = transcriptVM.modelProgress, let expected = transcriptVM.modelExpectedBytes {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ProgressView(value: p)
+                                        Text("Model data: \(WhisperModelInfo.formatMB(transcriptVM.modelBytesOnDisk)) / \(WhisperModelInfo.formatMB(expected))")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                } else {
+                                    Text("Model data: \(WhisperModelInfo.formatMB(transcriptVM.modelBytesOnDisk))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+
                             HStack {
                                 Button("Reset Whisper Models") {
                                     WhisperModelReset.resetAll()
@@ -137,7 +164,6 @@ struct AudioEditView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-                            
 
                             if let err = transcriptVM.errorMessage {
                                 Text(err)
@@ -147,7 +173,6 @@ struct AudioEditView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
 
-                            // Scrollable text field
                             TextEditor(text: .constant(transcriptVM.transcriptText))
                                 .font(.body)
                                 .frame(minHeight: 220)
@@ -158,6 +183,7 @@ struct AudioEditView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         .padding(.top, 6)
+
 
                         Spacer(minLength: 30)
                     }

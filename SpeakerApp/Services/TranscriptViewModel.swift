@@ -8,43 +8,81 @@ final class TranscriptViewModel: ObservableObject {
     @Published var words: [WordTiming] = []
     @Published var errorMessage: String? = nil
 
-    // Optional UI progress (WhisperKit itself can provide more detailed progress,
-    // but for now this is simple).
-    @Published var progress: Double = 0.0
+    // UI feedback
+    @Published var statusText: String = ""
+    @Published var modelBytesOnDisk: Int64 = 0
+    @Published var modelExpectedBytes: Int64? = nil
+    @Published var modelProgress: Double? = nil  // 0...1 when expected is known
 
-    /// Main entry: transcribe a stored MP3 URL offline (on device) with WhisperKit.
-    /// - Parameters:
-    ///   - mp3URL: file URL in your app storage
-    ///   - languageCode: "en", "es", "pt" (optional). If nil, auto-detect.
-    ///   - model: WhisperKit model name (optional). Default set inside WhisperKitTranscriber.
+    private var monitorTask: Task<Void, Never>?
+
     func transcribeFromMP3(
         mp3URL: URL,
-        languageCode: String? = nil,
+        languageCode: String? = nil, // "en", "es", "pt" or nil
         model: String? = nil
     ) async {
+        let chosenModel = model ?? "base"
+
         isTranscribing = true
         errorMessage = nil
-        progress = 0
         transcriptText = ""
         words = []
 
+        statusText = "Preparing…"
+        modelExpectedBytes = WhisperModelInfo.expectedBytes(for: chosenModel)
+        modelProgress = nil
+        startModelMonitor()
+
         defer {
+            stopModelMonitor()
             isTranscribing = false
-            progress = 1.0
+            if errorMessage == nil { statusText = "Done" }
         }
 
         do {
+            statusText = "Loading / downloading model… (keep app open)"
             let output = try await WhisperKitTranscriber.shared.transcribeFile(
                 audioURL: mp3URL,
                 languageCode: languageCode,
-                model: model
+                model: chosenModel,
+                onStatus: { [weak self] s in
+                    Task { @MainActor in self?.statusText = s }
+                }
             )
 
+            statusText = "Updating UI…"
             transcriptText = output.text
             words = output.words
 
         } catch {
             errorMessage = error.localizedDescription
+            statusText = "Failed"
         }
+    }
+
+    // MARK: - Model monitor (gives “download progress” by disk growth)
+
+    private func startModelMonitor() {
+        stopModelMonitor()
+        monitorTask = Task { @MainActor in
+            while !Task.isCancelled {
+                let bytes = WhisperModelInfo.currentBytesOnDisk()
+                modelBytesOnDisk = bytes
+
+                if let expected = modelExpectedBytes, expected > 0 {
+                    let p = min(1.0, Double(bytes) / Double(expected))
+                    modelProgress = p
+                } else {
+                    modelProgress = nil
+                }
+
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+            }
+        }
+    }
+
+    private func stopModelMonitor() {
+        monitorTask?.cancel()
+        monitorTask = nil
     }
 }

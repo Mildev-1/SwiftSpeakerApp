@@ -1,7 +1,7 @@
 import Foundation
 import WhisperKit
+import os
 
-// Your app model (keep using your existing WordTiming type)
 struct TranscriptionOutput {
     let text: String
     let words: [WordTiming]
@@ -11,67 +11,74 @@ enum WhisperKitTranscriberNote: Error {
     case engineNotReady
 }
 
-/// Runs WhisperKit on-device and returns merged transcript + word timestamps.
-/// Implemented as an actor so WhisperKit init/transcribe is serialized safely.
 actor WhisperKitTranscriber {
     static let shared = WhisperKitTranscriber()
 
+    private let logger = Logger(subsystem: "SpeakerApp", category: "WhisperKit")
     private var whisperKit: WhisperKit?
     private var loadedModel: String?
 
-    /// Pick a multilingual model so you can do EN/ES/PT.
-    /// (You can change this later to "small", etc.)
     private let defaultModel: String = "base"
 
-    func prepare(model: String? = nil) async throws {
+    private func emit(_ s: String, onStatus: ((String) -> Void)?) {
+        onStatus?(s)
+        logger.info("\(s, privacy: .public)")
+    }
+
+    func prepare(model: String? = nil, onStatus: ((String) -> Void)? = nil) async throws {
         let modelToUse = model ?? defaultModel
 
         if let whisperKit, loadedModel == modelToUse {
+            emit("Model already loaded (\(modelToUse))", onStatus: onStatus)
             return
         }
+
+        emit("Initializing WhisperKit (\(modelToUse))…", onStatus: onStatus)
 
         let config = WhisperKitConfig(model: modelToUse)
         let engine = try await WhisperKit(config)
 
         self.whisperKit = engine
         self.loadedModel = modelToUse
+
+        emit("WhisperKit ready (\(modelToUse))", onStatus: onStatus)
     }
 
-    /// Transcribe a local audio file path (mp3/m4a/wav/flac supported by WhisperKit),
-    /// merge results, and map WhisperKit.WordTiming -> your app WordTiming.
+    /// ✅ Added `onStatus:` so the UI can show progress messages.
     func transcribeFile(
         audioURL: URL,
         languageCode: String? = nil,
-        model: String? = nil
+        model: String? = nil,
+        onStatus: ((String) -> Void)? = nil
     ) async throws -> TranscriptionOutput {
 
-        try await prepare(model: model)
+        try await prepare(model: model, onStatus: onStatus)
 
         guard let engine = whisperKit else {
             throw WhisperKitTranscriberNote.engineNotReady
         }
 
-        // Configure decoding
+        emit("Building decode options…", onStatus: onStatus)
+
         var options = DecodingOptions()
         options.wordTimestamps = true
-        options.chunkingStrategy = .vad  // better long-form stability :contentReference[oaicite:2]{index=2}
-
-        // Optional language hint (you can pass "en", "es", "pt")
-        // If you leave nil, Whisper will try to auto-detect (quality varies by model/audio).
+        options.chunkingStrategy = .vad
         options.language = languageCode
 
-        // IMPORTANT: parameter label is `decodeOptions:` :contentReference[oaicite:3]{index=3}
+        emit("Starting transcription…", onStatus: onStatus)
+
         let segments = try await engine.transcribe(
             audioPath: audioURL.path,
             decodeOptions: options
         )
 
-        // Merge all segments into a single result (text + timings)
+        emit("Merging segments…", onStatus: onStatus)
+
         let merged = TranscriptionUtilities.mergeTranscriptionResults(segments)
+        let cleanedText = merged.text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let cleanedText = merged.text.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines)
+        emit("Mapping word timestamps…", onStatus: onStatus)
 
-        // WhisperKit exposes word timings on the merged result
         let mappedWords: [WordTiming] = merged.allWords.map { w in
             WordTiming(
                 word: w.word,
@@ -79,6 +86,8 @@ actor WhisperKitTranscriber {
                 end: Double(w.end)
             )
         }
+
+        emit("Done (segments: \(segments.count), words: \(mappedWords.count))", onStatus: onStatus)
 
         return TranscriptionOutput(text: cleanedText, words: mappedWords)
     }
