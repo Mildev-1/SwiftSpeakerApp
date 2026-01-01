@@ -123,6 +123,21 @@ struct AudioEditView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
+                            
+                            // ✅ Add this row
+                            HStack {
+                                Button("Reset Whisper Models") {
+                                    WhisperModelReset.resetAll()
+                                }
+                                .buttonStyle(.bordered)
+
+                                Spacer()
+
+                                Text("Use if model download got stuck")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            
 
                             if let err = transcriptVM.errorMessage {
                                 Text(err)
