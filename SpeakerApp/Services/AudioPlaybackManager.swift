@@ -1,8 +1,3 @@
-//
-//  AudioPlaybackManager.swift
-//  SpeakerApp
-//
-
 import Foundation
 import AVFoundation
 import Combine
@@ -15,13 +10,16 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var isLoaded: Bool = false
     @Published private(set) var isPlaying: Bool = false
 
-    // ✅ default = 10, hard limit 50
+    // default = 10, hard limit 50
     @Published private(set) var loopCount: Int = 10
 
-    // ✅ Partial play state
+    // Partial play state
     @Published private(set) var isPartialPlaying: Bool = false
     @Published private(set) var partialIndex: Int = 0
     @Published private(set) var partialTotal: Int = 0
+
+    // ✅ NEW: highlight sentence currently played by tapping
+    @Published private(set) var currentSentenceID: UUID? = nil
 
     @Published var errorMessage: String? = nil
 
@@ -29,6 +27,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     private var loadedURL: URL?
 
     private var partialTask: Task<Void, Never>?
+    private var singleSegmentTask: Task<Void, Never>?   // ✅ NEW
 
     func loadIfNeeded(url: URL) {
         if loadedURL == url, player != nil { return }
@@ -70,7 +69,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         player?.numberOfLoops = clamped - 1
     }
 
-    // Tap repeat: +1 each time, wrap after 50 back to 1
     func cycleLoopCount() {
         let next = (loopCount >= 50) ? 1 : (loopCount + 1)
         loopCount = next
@@ -78,8 +76,11 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     func togglePlay(url: URL) {
-        // stop partial playback if user hits normal play
+        // stop partial + single-segment if user hits normal play
         stopPartialPlayback()
+        singleSegmentTask?.cancel()
+        singleSegmentTask = nil
+        currentSentenceID = nil
 
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
@@ -88,7 +89,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             p.pause()
             isPlaying = false
         } else {
-            // normal full playback respects loopCount
             applyLoopCount()
             p.play()
             isPlaying = true
@@ -98,17 +98,69 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     func stop() {
         stopPartialPlayback()
 
+        singleSegmentTask?.cancel()
+        singleSegmentTask = nil
+        currentSentenceID = nil
+
         guard let p = player else { return }
         p.stop()
         p.currentTime = 0
         isPlaying = false
     }
 
-    // MARK: - Partial playback (sentence by sentence)
+    // MARK: - Tap a sentence: play only its segment once
 
-    /// Plays the audio file sentence-by-sentence, based on word timestamps.
-    /// Plays a short system sound between sentence cuts.
+    func playSegmentOnce(url: URL, start: Double, end: Double, sentenceID: UUID? = nil) {
+        stopPartialPlayback()
+
+        singleSegmentTask?.cancel()
+        singleSegmentTask = nil
+
+        loadIfNeeded(url: url)
+        guard let p = player, isLoaded else { return }
+
+        let s = max(0, start)
+        let e = max(s, end)
+        let dur = e - s
+        guard dur > 0.03 else { return }
+
+        currentSentenceID = sentenceID
+
+        p.stop()
+        p.numberOfLoops = 0
+        p.currentTime = s
+        p.play()
+        isPlaying = true
+
+        singleSegmentTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(nanoseconds: UInt64(dur * 1_000_000_000))
+            } catch {
+                await MainActor.run {
+                    self.isPlaying = false
+                    self.currentSentenceID = nil
+                }
+                return
+            }
+
+            await MainActor.run {
+                self.player?.pause()
+                self.player?.currentTime = e
+                self.isPlaying = false
+                self.currentSentenceID = nil
+            }
+        }
+    }
+
+    // MARK: - Partial playback (sentence-by-sentence)
+
     func togglePartialPlay(url: URL, words: [WordTiming]) {
+        // tapping partial should cancel single-segment play
+        singleSegmentTask?.cancel()
+        singleSegmentTask = nil
+        currentSentenceID = nil
+
         if isPartialPlaying {
             stopPartialPlayback()
             stop()
@@ -118,7 +170,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     }
 
     private func startPartialPlayback(url: URL, words: [WordTiming]) {
-        stop() // stop any normal playback
+        stop() // stops normal + cancels single-segment
 
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
@@ -129,7 +181,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             return
         }
 
-        // Partial playback always plays ONCE per segment (no loops).
         p.numberOfLoops = 0
 
         isPartialPlaying = true
@@ -144,18 +195,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             for (idx, seg) in segments.enumerated() {
                 if Task.isCancelled { break }
 
-                await MainActor.run {
-                    self.partialIndex = idx + 1
-                }
+                await MainActor.run { self.partialIndex = idx + 1 }
 
-                // Play that segment
                 let ok = await self.playSegment(seg, with: url)
                 if !ok || Task.isCancelled { break }
 
-                // Beep between cuts (not after last one)
                 if idx < segments.count - 1 {
                     await self.beep()
-                    try? await Task.sleep(nanoseconds: 120_000_000) // small gap
+                    try? await Task.sleep(nanoseconds: 120_000_000)
                 }
             }
 
@@ -180,13 +227,11 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return false }
 
-        // Clamp times
         let start = max(0, seg.start)
         let end = max(start, seg.end)
         let duration = end - start
         if duration < 0.03 { return true }
 
-        // Start at the segment time
         p.stop()
         p.currentTime = start
         p.numberOfLoops = 0
@@ -194,18 +239,15 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         p.play()
         isPlaying = true
 
-        // Wait for segment duration, then stop exactly at cut
         let nanos = UInt64(duration * 1_000_000_000)
         do {
             try await Task.sleep(nanoseconds: nanos)
         } catch {
-            // cancelled
             p.stop()
             isPlaying = false
             return false
         }
 
-        // Stop at end of segment
         p.pause()
         p.currentTime = end
         isPlaying = false
@@ -214,13 +256,15 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
     private func beep() async {
         #if os(iOS)
-        // "Tock" system sound (works without bundling assets)
         AudioServicesPlaySystemSound(1104)
         #endif
     }
 
     // MARK: AVAudioPlayerDelegate
     func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.isPlaying = false }
+        Task { @MainActor in
+            self.isPlaying = false
+            self.currentSentenceID = nil
+        }
     }
 }
