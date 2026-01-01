@@ -1,4 +1,2 @@
 
-
-Teleprompter scripts training app
-
+Teleprompter scripts speaking training App
