@@ -33,15 +33,13 @@ struct AudioEditView: View {
 
                 HStack(spacing: 12) {
                     Button {
-                        playback.loadIfNeeded(url: storedURL)
-                        playback.togglePlay()
+                        playback.togglePlay(url: storedURL)
                     } label: {
                         Label(playback.isPlaying ? "Pause" : "Play",
                               systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
                             .frame(minWidth: 110)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!FileManager.default.fileExists(atPath: storedURL.path))
 
                     Button {
                         playback.stop()
@@ -51,17 +49,27 @@ struct AudioEditView: View {
                     }
                     .buttonStyle(.bordered)
 
-                }
+                    // ✅ Repeat icon only (no stepper / +/-)
+                    Button {
+                        playback.cycleLoopCount()
+                    } label: {
+                        ZStack(alignment: .bottomTrailing) {
+                            Image(systemName: "repeat")
+                                .font(.title3)
+                                .padding(10)
 
-                VStack(spacing: 8) {
-                    Text("Loop: \(playback.loopCount)× (max 50)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Stepper(value: $playback.loopCount, in: 1...50) {
-                        Text("Repeat")
+                            // Small ×N badge (still just the repeat icon control)
+                            Text("×\(playback.loopCount)")
+                                .font(.caption2)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.thinMaterial)
+                                .clipShape(Capsule())
+                                .offset(x: 6, y: 6)
+                        }
                     }
-                    .frame(maxWidth: 260)
+                    .buttonStyle(.bordered)
+                    .accessibilityLabel("Repeat \(playback.loopCount) times (max 50)")
                 }
 
                 if let msg = playback.errorMessage {
@@ -84,7 +92,7 @@ struct AudioEditView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
-            // Prepare (no autoplay) so first Play is instant
+            // Preload (no autoplay). If missing, an error message appears.
             playback.loadIfNeeded(url: storedURL)
         }
     }
@@ -93,7 +101,7 @@ struct AudioEditView: View {
 #Preview {
     AudioEditView(item: AudioItem(
         scriptName: "MyScript01",
-        originalFileName: "example_with_a_long_filename_example_with_a_long_filename.mp3",
+        originalFileName: "example_long_long_long.mp3",
         storedFileName: "example.mp3",
         storedRelativePath: "example.mp3"
     ))
