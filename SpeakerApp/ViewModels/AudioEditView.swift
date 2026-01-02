@@ -3,25 +3,16 @@ import SwiftUI
 import AppKit
 #endif
 
+/// MODIFIED FILE: AudioEditView.swift
+///
+/// Now focused only on transcript display/edit and (re)transcription controls.
+/// All playback/practice UI moved to PracticeView.
 struct AudioEditView: View {
     let item: AudioItem
     let onClose: () -> Void
 
-    @StateObject private var playback = AudioPlaybackManager()
     @StateObject private var transcriptVM = TranscriptViewModel()
-
     @State private var selectedChunk: SentenceChunk? = nil
-
-    // Repeat practice UI (persisted)
-    @State private var isRepeatPracticeEnabled: Bool = false
-    @State private var practiceRepeats: Int = 2
-    @State private var practiceSilenceMultiplier: Double = 1.0
-    @State private var sentencesPauseOnly: Bool = false
-
-    // Font scale slider for Full Screen Playback (persisted per item)
-    @State private var playbackFontScale: Double = 1.0
-
-    @State private var showPlaybackScreen: Bool = false
 
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
@@ -37,9 +28,7 @@ struct AudioEditView: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         headerSection
-                        playbackSection
-                        transcriptSection   // ✅ includes re-transcribe controls at bottom
-                        errorSection
+                        transcriptSection
                     }
                     .frame(maxWidth: 720)
                     .frame(maxWidth: .infinity)
@@ -50,21 +39,7 @@ struct AudioEditView: View {
         }
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
-            playback.loadIfNeeded(url: storedMP3URL)
-
-            let s = transcriptVM.playbackSettings.clamped()
-            isRepeatPracticeEnabled = s.repeatPracticeEnabled
-            practiceRepeats = s.practiceRepeats
-            practiceSilenceMultiplier = s.practiceSilenceMultiplier
-            sentencesPauseOnly = s.sentencesPauseOnly
-            playbackFontScale = s.playbackFontScale
         }
-        .onChange(of: isRepeatPracticeEnabled) { _ in persistPlaybackSettings() }
-        .onChange(of: practiceRepeats) { _ in persistPlaybackSettings() }
-        .onChange(of: practiceSilenceMultiplier) { _ in persistPlaybackSettings() }
-        .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
-        .onChange(of: playbackFontScale) { _ in persistPlaybackSettings() }
-
         .sheet(item: $selectedChunk) { chunk in
             SentenceEditSheet(
                 itemID: item.id,
@@ -74,25 +49,6 @@ struct AudioEditView: View {
                 transcriptVM: transcriptVM
             )
         }
-        .fullScreenCover(isPresented: $showPlaybackScreen) {
-            PlaybackScreenView(
-                item: item,
-                playback: playback,
-                transcriptVM: transcriptVM,
-                isPresented: $showPlaybackScreen
-            )
-        }
-    }
-
-    private func persistPlaybackSettings() {
-        let s = PlaybackSettings(
-            repeatPracticeEnabled: isRepeatPracticeEnabled,
-            practiceRepeats: practiceRepeats,
-            practiceSilenceMultiplier: practiceSilenceMultiplier,
-            sentencesPauseOnly: sentencesPauseOnly,
-            playbackFontScale: playbackFontScale
-        ).clamped()
-        transcriptVM.setPlaybackSettings(itemID: item.id, s)
     }
 
     private var background: some View {
@@ -109,12 +65,11 @@ struct AudioEditView: View {
     private var topBar: some View {
         HStack(spacing: 12) {
             Button {
-                playback.stop()
                 onClose()
             } label: {
                 Image(systemName: "chevron.left")
-                    .font(.title3)
-                    .padding(10)
+                    .font(.headline)
+                    .frame(width: 44, height: 44)
             }
             .buttonStyle(.bordered)
 
@@ -145,139 +100,6 @@ struct AudioEditView: View {
         }
     }
 
-    private var playbackSection: some View {
-        VStack(spacing: 12) {
-
-            // Font size slider (affects Full Screen Playback)
-            VStack(spacing: 8) {
-                HStack {
-                    Text("Playback font size")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(playbackFontScale * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Slider(value: $playbackFontScale, in: 1.0...2.2, step: 0.05)
-            }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
-
-            // Repeat practice toggle + controls (persisted)
-            VStack(spacing: 10) {
-                Toggle(isOn: $isRepeatPracticeEnabled) {
-                    Text("Repeat practice")
-                        .font(.callout)
-                        .fontWeight(.semibold)
-                }
-                .toggleStyle(.switch)
-
-                if isRepeatPracticeEnabled {
-                    VStack(spacing: 10) {
-                        Picker("Repeats", selection: $practiceRepeats) {
-                            Text("1").tag(1)
-                            Text("2").tag(2)
-                            Text("3").tag(3)
-                        }
-                        .pickerStyle(.segmented)
-
-                        VStack(spacing: 6) {
-                            HStack {
-                                Text("Silence multiplier")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("×\(practiceSilenceMultiplier, specifier: "%.2f")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: $practiceSilenceMultiplier, in: 0.5...2.0)
-                        }
-
-                        Toggle(isOn: $sentencesPauseOnly) {
-                            Text("Sentences pause only")
-                                .font(.callout)
-                                .fontWeight(.semibold)
-                        }
-                        .toggleStyle(.switch)
-                    }
-                    .padding(12)
-                    .background(.thinMaterial)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(.quaternary, lineWidth: 1)
-                    )
-                }
-            }
-
-            // Play / Stop (full file)
-            HStack(spacing: 12) {
-                Button { playback.togglePlay(url: storedMP3URL) } label: {
-                    Label(playback.isPlaying ? "Pause" : "Play",
-                          systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-
-                Button { playback.stop() } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-
-            // ✅ FIX: Partial Play uses repeat-practice mode when toggle is ON
-            HStack(spacing: 12) {
-                Button {
-                    let willStart = !playback.isPartialPlaying
-
-                    let mode: AudioPlaybackManager.PartialPlaybackMode =
-                        isRepeatPracticeEnabled
-                        ? .repeatPractice(
-                            repeats: practiceRepeats,
-                            silenceMultiplier: practiceSilenceMultiplier,
-                            sentencesPauseOnly: sentencesPauseOnly
-                        )
-                        : .beepBetweenCuts
-
-                    playback.togglePartialPlay(
-                        url: storedMP3URL,
-                        chunks: transcriptVM.sentenceChunks,
-                        manualCutsBySentence: transcriptVM.manualCutsBySentence,
-                        fineTunesBySubchunk: transcriptVM.fineTunesBySubchunk,
-                        mode: mode
-                    )
-
-                    if willStart { showPlaybackScreen = true }
-                } label: {
-                    Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play", systemImage: "scissors")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(transcriptVM.sentenceChunks.isEmpty || transcriptVM.isTranscribing)
-
-                Button { playback.cycleLoopCount() } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "repeat")
-                        Text("×\(playback.loopCount)")
-                            .font(.callout)
-                            .fontWeight(.semibold)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-            }
-        }
-    }
-
     private var transcriptSection: some View {
         VStack(spacing: 10) {
             // Transcript list
@@ -289,26 +111,21 @@ struct AudioEditView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
-                            let isActive = (playback.currentSentenceID == chunk.id)
+                        ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { _, chunk in
                             let textToShow = transcriptVM.displayText(for: chunk)
 
                             Button { selectedChunk = chunk } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Text("\(idx + 1).")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .frame(width: 28, alignment: .trailing)
-
-                                    Text(textToShow)
-                                        .foregroundStyle(isActive ? .orange : .primary)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(12)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(isActive ? .orange.opacity(0.10) : Color.clear)
-                                )
+                                Text(textToShow)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(12)
+                                    .background(.thinMaterial)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .stroke(.quaternary, lineWidth: 1)
+                                    )
                             }
                             .buttonStyle(.plain)
                             .contentShape(Rectangle())
@@ -324,25 +141,77 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // ✅ Re-transcribe controls (restored)
-            HStack(spacing: 10) {
-                Text("Language")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            // Transcribe / Re-Transcribe + language dropdown + status/errors
+            VStack(spacing: 10) {
+                HStack(spacing: 10) {
+                    Text("Language")
+                        .font(.callout)
+                        .fontWeight(.semibold)
+                    Spacer()
 
-                Spacer()
-
-                Picker("", selection: $transcriptVM.preferredLanguageCode) {
-                    Text("Auto").tag("auto")
-                    Text("EN").tag("en")
-                    Text("ES").tag("es")
-                    Text("FR").tag("fr")
-                    Text("PT").tag("pt")
-                    Text("IT").tag("it")
-                    Text("DE").tag("de")
-                    Text("PL").tag("pl")
+                    Picker("", selection: $transcriptVM.preferredLanguageCode) {
+                        Text("Auto").tag("auto")
+                        Text("English").tag("en")
+                        Text("Polish").tag("pl")
+                        Text("Spanish").tag("es")
+                        Text("German").tag("de")
+                        Text("French").tag("fr")
+                        Text("Italian").tag("it")
+                        Text("Ukrainian").tag("uk")
+                        Text("Russian").tag("ru")
+                    }
+                    .pickerStyle(.menu)
                 }
-                .pickerStyle(.menu)
+                .onChange(of: transcriptVM.preferredLanguageCode) { _ in
+                    // Keep behavior consistent with existing persistence expectations
+                    transcriptVM.saveCutPlan(itemID: item.id)
+                }
+
+                HStack {
+                    Button {
+                        // Use Swift.Task to avoid custom Task symbol collision
+                        _Concurrency.Task {
+                            let force = transcriptVM.hasCachedTranscript
+                            await transcriptVM.transcribeFromMP3(
+                                itemID: item.id,
+                                mp3URL: storedMP3URL,
+                                languageCode: transcriptVM.preferredLanguageCode,
+                                model: "base",
+                                force: force
+                            )
+                        }
+                    } label: {
+                        Label(
+                            transcriptVM.isTranscribing
+                            ? "Transcribing…"
+                            : (transcriptVM.hasCachedTranscript ? "Re-Transcribe" : "Extract Text"),
+                            systemImage: "text.quote"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(transcriptVM.isTranscribing)
+
+                    Spacer()
+
+                    Text("Words: \(transcriptVM.words.count)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !transcriptVM.statusText.isEmpty {
+                    Text(transcriptVM.statusText)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if let err = transcriptVM.errorMessage {
+                    Text(err)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.top, 4)
+                }
             }
             .padding(12)
             .background(.thinMaterial)
@@ -351,67 +220,6 @@ struct AudioEditView: View {
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(.quaternary, lineWidth: 1)
             )
-            .onChange(of: transcriptVM.preferredLanguageCode) { _ in
-                transcriptVM.saveCutPlan(itemID: item.id)
-            }
-
-            HStack {
-                Button {
-                    // Use Swift.Task to avoid custom Task symbol collision
-                    _Concurrency.Task {
-                        let force = transcriptVM.hasCachedTranscript
-                        await transcriptVM.transcribeFromMP3(
-                            itemID: item.id,
-                            mp3URL: storedMP3URL,
-                            languageCode: transcriptVM.preferredLanguageCode,
-                            model: "base",
-                            force: force
-                        )
-                    }
-                } label: {
-                    Label(
-                        transcriptVM.isTranscribing
-                        ? "Transcribing…"
-                        : (transcriptVM.hasCachedTranscript ? "Re-Transcribe" : "Extract Text"),
-                        systemImage: "text.quote"
-                    )
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(transcriptVM.isTranscribing)
-
-                Spacer()
-
-                Text("Words: \(transcriptVM.words.count)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            if !transcriptVM.statusText.isEmpty {
-                Text(transcriptVM.statusText)
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
-            if let err = transcriptVM.errorMessage {
-                Text(err)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.top, 6)
-    }
-
-    private var errorSection: some View {
-        Group {
-            if let msg = playback.errorMessage {
-                Text(msg)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 4)
-            }
         }
     }
 }

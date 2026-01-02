@@ -1,8 +1,3 @@
-//
-//  ContentView.swift
-//  SpeakerApp
-//
-
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -19,6 +14,9 @@ struct ContentView: View {
 
     // Edit screen state (full-screen overlay)
     @State private var editingItem: AudioItem? = nil
+
+    // ✅ Practice screen state (full-screen overlay)
+    @State private var practicingItem: AudioItem? = nil
 
     // ✅ delete confirmation state
     @State private var pendingDeleteItem: AudioItem? = nil
@@ -40,7 +38,14 @@ struct ContentView: View {
                                 scriptName: bindingForScriptName(itemID: item.id),
                                 onEditTapped: {
                                     withAnimation(.easeInOut(duration: 0.25)) {
+                                        practicingItem = nil
                                         editingItem = item
+                                    }
+                                },
+                                onPracticeTapped: {
+                                    withAnimation(.easeInOut(duration: 0.25)) {
+                                        editingItem = nil
+                                        practicingItem = item
                                     }
                                 }
                             )
@@ -73,6 +78,20 @@ struct ContentView: View {
                     )
                     .transition(.move(edge: .leading))
                     .zIndex(10)
+                }
+
+                // ✅ Full screen practice view that slides in from RIGHT
+                if let item = practicingItem {
+                    PracticeView(
+                        item: item,
+                        onClose: {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                practicingItem = nil
+                            }
+                        }
+                    )
+                    .transition(.move(edge: .trailing))
+                    .zIndex(11)
                 }
             }
             .fileImporter(
@@ -130,6 +149,11 @@ struct ContentView: View {
                         withAnimation(.easeInOut(duration: 0.25)) { editingItem = nil }
                     }
 
+                    // close practice if deleting the opened item
+                    if practicingItem?.id == item.id {
+                        withAnimation(.easeInOut(duration: 0.25)) { practicingItem = nil }
+                    }
+
                     library.deleteItem(id: item.id)
                     pendingDeleteItem = nil
                 }
@@ -163,7 +187,10 @@ struct ContentView: View {
     private func bindingForScriptName(itemID: UUID) -> Binding<String> {
         Binding(
             get: { library.items.first(where: { $0.id == itemID })?.scriptName ?? "" },
-            set: { newValue in library.updateScriptName(id: itemID, name: newValue) }
+            set: { newValue in
+                // ✅ Correct labels for your AudioLibrary:
+                library.updateScriptName(id: itemID, name: newValue)
+            }
         )
     }
 
