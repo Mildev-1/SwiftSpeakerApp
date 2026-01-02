@@ -6,7 +6,8 @@ import Foundation
 /// - fine-tunes per subchunk
 /// - playback settings
 /// - preferred transcription language
-/// - ✅ flagged sentence IDs (Practice)
+/// - flagged sentence IDs (Practice)
+/// - ✅ hard words (🚀 markers) + fine-tunes
 struct CutPlanRecord: Codable, Hashable {
     var sentenceEdits: [String: String]
     var manualCutsBySentence: [String: [Double]]
@@ -15,8 +16,14 @@ struct CutPlanRecord: Codable, Hashable {
     var preferredLanguageCode: String
     var updatedAt: Date
 
-    /// ✅ NEW: flagged sentence IDs (SentenceChunk.id)
+    /// Practice: persisted flags (SentenceChunk.id)
     var flaggedSentenceIDs: Set<String>
+
+    /// ✅ NEW: hard words extracted per sentence (SentenceChunk.id)
+    var hardWordsBySentence: [String: [HardWordSegment]]
+
+    /// ✅ NEW: fine-tune offsets for hard words (HardWordSegment.id)
+    var fineTunesByHardWord: [String: SegmentFineTune]
 
     // legacy
     private var legacyManualCutTimes: [Double]?
@@ -28,7 +35,9 @@ struct CutPlanRecord: Codable, Hashable {
         playbackSettings: PlaybackSettings = PlaybackSettings(),
         preferredLanguageCode: String = "auto",
         updatedAt: Date = Date(),
-        flaggedSentenceIDs: Set<String> = []
+        flaggedSentenceIDs: Set<String> = [],
+        hardWordsBySentence: [String: [HardWordSegment]] = [:],
+        fineTunesByHardWord: [String: SegmentFineTune] = [:]
     ) {
         self.sentenceEdits = sentenceEdits
         self.manualCutsBySentence = manualCutsBySentence
@@ -37,6 +46,8 @@ struct CutPlanRecord: Codable, Hashable {
         self.preferredLanguageCode = preferredLanguageCode
         self.updatedAt = updatedAt
         self.flaggedSentenceIDs = flaggedSentenceIDs
+        self.hardWordsBySentence = hardWordsBySentence
+        self.fineTunesByHardWord = fineTunesByHardWord
         self.legacyManualCutTimes = nil
     }
 
@@ -48,6 +59,10 @@ struct CutPlanRecord: Codable, Hashable {
         case preferredLanguageCode
         case updatedAt
         case flaggedSentenceIDs
+
+        case hardWordsBySentence
+        case fineTunesByHardWord
+
         case manualCutTimes // legacy
     }
 
@@ -61,8 +76,11 @@ struct CutPlanRecord: Codable, Hashable {
         self.preferredLanguageCode = (try? c.decode(String.self, forKey: .preferredLanguageCode)) ?? "auto"
         self.updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? Date()
 
-        // ✅ backward compatible: older JSON won’t have this
         self.flaggedSentenceIDs = (try? c.decode(Set<String>.self, forKey: .flaggedSentenceIDs)) ?? []
+
+        // ✅ NEW (backward compatible)
+        self.hardWordsBySentence = (try? c.decode([String: [HardWordSegment]].self, forKey: .hardWordsBySentence)) ?? [:]
+        self.fineTunesByHardWord = (try? c.decode([String: SegmentFineTune].self, forKey: .fineTunesByHardWord)) ?? [:]
 
         // legacy manual cuts
         self.legacyManualCutTimes = try? c.decode([Double].self, forKey: .manualCutTimes)
@@ -80,6 +98,9 @@ struct CutPlanRecord: Codable, Hashable {
         try c.encode(preferredLanguageCode, forKey: .preferredLanguageCode)
         try c.encode(updatedAt, forKey: .updatedAt)
         try c.encode(flaggedSentenceIDs, forKey: .flaggedSentenceIDs)
+
+        try c.encode(hardWordsBySentence, forKey: .hardWordsBySentence)
+        try c.encode(fineTunesByHardWord, forKey: .fineTunesByHardWord)
         // do not write legacy field anymore
     }
 }

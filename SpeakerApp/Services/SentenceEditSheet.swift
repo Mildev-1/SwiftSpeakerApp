@@ -22,6 +22,10 @@ struct SentenceEditSheet: View {
     @State private var subchunks: [SentenceSubchunk] = []
     @State private var unlocked: Set<String> = []
 
+    // ✅ NEW: hard words list + locks
+    @State private var hardWords: [HardWordSegment] = []
+    @State private var unlockedHardWords: Set<String> = []
+
     init(itemID: UUID, chunk: SentenceChunk, audioURL: URL, words: [WordTiming], transcriptVM: TranscriptViewModel) {
         self.itemID = itemID
         self.chunk = chunk
@@ -40,7 +44,7 @@ struct SentenceEditSheet: View {
                         // MAIN CARD: Play/Stop + editor + Save/Edit
                         VStack(spacing: 12) {
 
-                            // ✅ Play + Stop row
+                            // Play + Stop row
                             HStack(spacing: 12) {
                                 Button {
                                     playback.playSegmentOnce(
@@ -66,7 +70,8 @@ struct SentenceEditSheet: View {
                                 .disabled(!playback.isPlaying && !playback.isPartialPlaying)
                             }
 
-                            Text("Tap to edit manual pauses")
+                            // helper label above editor
+                            Text("Tap to edit manual pauses / hard words")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -116,58 +121,92 @@ struct SentenceEditSheet: View {
                                 .stroke(.quaternary, lineWidth: 1)
                         )
 
-                        // Sentence parts: only each part has wrapper (no full section wrapper)
+                        // Sentence parts
                         if !subchunks.isEmpty {
-                            VStack(alignment: .center, spacing: 12) {
+                            VStack(spacing: 10) {
                                 Text("Sentence parts")
                                     .font(.headline)
                                     .frame(maxWidth: .infinity, alignment: .center)
-                                    .padding(.top, 2)
 
-                                VStack(spacing: 12) {
-                                    ForEach(subchunks, id: \.id) { sc in
-                                        partCard(for: sc)
-                                    }
+                                ForEach(subchunks, id: \.id) { sc in
+                                    partCard(for: sc)
                                 }
-                                .frame(maxWidth: .infinity, alignment: .center)
                             }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        } else {
-                            Text("No saved pauses in this sentence.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.top, 6)
+                            .padding(.top, 6)
+                        }
+
+                        // ✅ NEW: Hard words list
+                        VStack(spacing: 10) {
+                            Text("Hard words")
+                                .font(.headline)
+                                .frame(maxWidth: .infinity, alignment: .center)
+
+                            if hardWords.isEmpty {
+                                Text("Tap 🚀 in the toolbar to mark a hard word (the next word after 🚀).")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.center)
+                                    .padding(.horizontal, 12)
+                            } else {
+                                ForEach(hardWords, id: \.id) { hw in
+                                    hardWordCard(for: hw)
+                                }
+                            }
+                        }
+                        .padding(.top, 6)
+                    }
+                    .padding()
+                }
+                .onAppear {
+                    playback.loadIfNeeded(url: audioURL)
+
+                    let savedText = transcriptVM.displayText(for: chunk)
+                    let savedCuts = (transcriptVM.manualCutsBySentence[chunk.id] ?? []).sorted()
+                    subchunks = SentenceSubchunkBuilder.build(sentence: chunk, editedText: savedText, manualCuts: savedCuts)
+
+                    // Prefer persisted hard words; if none, compute from current text (no persistence until Save)
+                    if let persisted = transcriptVM.hardWordsBySentence[chunk.id] {
+                        hardWords = persisted
+                    } else {
+                        hardWords = SentenceCursorTimeMapper.hardWordSegmentsFromEditedText(
+                            editedText: savedText,
+                            chunk: chunk,
+                            allWords: transcriptVM.words
+                        )
+                    }
+
+                    draftText = savedText
+                }
+                .onDisappear {
+                    playback.stop()
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("Done") {
+                            playback.stop()
+                            dismiss()
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(16)
-                }
-            }
-            .navigationTitle("Sentence")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("Close") { dismiss() }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if isEditable && isFocused {
-                        Button("Add Pause") { insertPauseEmoji() }
+
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if isEditable && isFocused {
+                            Button {
+                                insertPauseEmoji()
+                            } label: {
+                                Label("Pause", systemImage: "pause.circle")
+                            }
+
+                            Button {
+                                insertRocketEmoji()
+                            } label: {
+                                Text("🚀")
+                                    .font(.headline)
+                                    .padding(.horizontal, 6)
+                            }
+                            .accessibilityLabel("Add hard word marker")
+                        }
                     }
                 }
-            }
-            .onAppear {
-                playback.loadIfNeeded(url: audioURL)
-
-                let savedText = transcriptVM.displayText(for: chunk)
-                let savedCuts = (transcriptVM.manualCutsBySentence[chunk.id] ?? []).sorted()
-                subchunks = SentenceSubchunkBuilder.build(
-                    sentence: chunk,
-                    editedText: savedText,
-                    manualCuts: savedCuts
-                )
-
-                draftText = savedText
             }
         }
     }
@@ -186,6 +225,16 @@ struct SentenceEditSheet: View {
                 transcriptVM.fineTunesBySubchunk[sc.id] = SegmentFineTune()
             }
         }
+
+        // refresh from persisted state
+        hardWords = transcriptVM.hardWordsBySentence[chunk.id] ?? []
+
+        for hw in hardWords {
+            if transcriptVM.fineTunesByHardWord[hw.id] == nil {
+                transcriptVM.fineTunesByHardWord[hw.id] = SegmentFineTune()
+            }
+        }
+
         transcriptVM.saveCutPlan(itemID: itemID)
     }
 
@@ -200,6 +249,20 @@ struct SentenceEditSheet: View {
         draftText = ns.replacingCharacters(in: r, with: pauseEmoji)
 
         let newLoc = safeLoc + (pauseEmoji as NSString).length
+        selectedRange = NSRange(location: newLoc, length: 0)
+    }
+
+    private func insertRocketEmoji() {
+        let rocket = SentenceCursorTimeMapper.rocketEmoji
+
+        let ns = draftText as NSString
+        let safeLoc = max(0, min(selectedRange.location, ns.length))
+        let safeLen = max(0, min(selectedRange.length, ns.length - safeLoc))
+        let r = NSRange(location: safeLoc, length: safeLen)
+
+        draftText = ns.replacingCharacters(in: r, with: rocket)
+
+        let newLoc = safeLoc + (rocket as NSString).length
         selectedRange = NSRange(location: newLoc, length: 0)
     }
 
@@ -296,13 +359,106 @@ struct SentenceEditSheet: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 2)
+    }
+
+    // ✅ NEW: hard word card
+    @ViewBuilder
+    private func hardWordCard(for hw: HardWordSegment) -> some View {
+        let tune = transcriptVM.fineTuneForHardWord(hw.id)
+        let isUnlocked = unlockedHardWords.contains(hw.id)
+
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                let adj = adjustedTimes(forHardWord: hw)
+                playback.playSegmentOnce(url: audioURL, start: adj.start, end: adj.end, sentenceID: nil)
+            } label: {
+                Label("Play word", systemImage: "play.fill")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.bordered)
+
+            // Display word in a TextField-style control (read-only for now)
+            TextField("", text: .constant(hw.word))
+                .textFieldStyle(.roundedBorder)
+                .disabled(true)
+
+            HStack(spacing: 10) {
+                Slider(
+                    value: Binding(
+                        get: { tune.startOffset },
+                        set: { newVal in
+                            guard isUnlocked else { return }
+                            transcriptVM.setHardWordFineTune(
+                                itemID: itemID,
+                                hardWordID: hw.id,
+                                startOffset: newVal,
+                                endOffset: tune.endOffset
+                            )
+                        }
+                    ),
+                    in: -0.5...0.5,
+                    step: 0.01
+                )
+                .disabled(!isUnlocked)
+
+                Button {
+                    if isUnlocked { unlockedHardWords.remove(hw.id) } else { unlockedHardWords.insert(hw.id) }
+                } label: {
+                    Image(systemName: isUnlocked ? "lock.open.fill" : "lock.fill")
+                        .font(.headline)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+
+                Slider(
+                    value: Binding(
+                        get: { tune.endOffset },
+                        set: { newVal in
+                            guard isUnlocked else { return }
+                            transcriptVM.setHardWordFineTune(
+                                itemID: itemID,
+                                hardWordID: hw.id,
+                                startOffset: tune.startOffset,
+                                endOffset: newVal
+                            )
+                        }
+                    ),
+                    in: -0.5...0.5,
+                    step: 0.01
+                )
+                .disabled(!isUnlocked)
+            }
+            .opacity(isUnlocked ? 1.0 : 0.65)
+
+            Text("Fine tune: start \(fmt(tune.startOffset))s, end \(fmt(tune.endOffset))s")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+        .frame(maxWidth: 560, alignment: .center)
     }
 
     private func adjustedTimes(for sc: SentenceSubchunk) -> (start: Double, end: Double) {
         let tune = transcriptVM.fineTune(for: sc.id)
         var s = sc.baseStart + tune.startOffset
         var e = sc.baseEnd + tune.endOffset
+
+        s = max(chunk.start, min(s, chunk.end))
+        e = max(chunk.start, min(e, chunk.end))
+        if e <= s { e = min(chunk.end, s + 0.05) }
+        return (s, e)
+    }
+
+    private func adjustedTimes(forHardWord hw: HardWordSegment) -> (start: Double, end: Double) {
+        let tune = transcriptVM.fineTuneForHardWord(hw.id)
+        var s = hw.baseStart + tune.startOffset
+        var e = hw.baseEnd + tune.endOffset
 
         s = max(chunk.start, min(s, chunk.end))
         e = max(chunk.start, min(e, chunk.end))
