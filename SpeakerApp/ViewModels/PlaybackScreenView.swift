@@ -29,20 +29,49 @@ struct PlaybackScreenView: View {
     private var textFont: Font { .system(size: baseBodySize * fontScale) }
     private var indexFont: Font { .system(size: max(11.0, (baseBodySize * fontScale) * 0.80)) }
 
+    private var pauseIconName: String {
+        playback.isPaused ? "play.fill" : "pause.fill"
+    }
+
+    // ✅ solid badge
     private var modeBadge: some View {
         HStack(spacing: 6) {
-            Text(modeText).font(.caption).fontWeight(.semibold)
-            Image(systemName: modeIcon).font(.caption).fontWeight(.semibold)
+            Text(modeText)
+                .font(.caption)
+                .fontWeight(.semibold)
+            Image(systemName: modeIcon)
+                .font(.caption)
+                .fontWeight(.semibold)
         }
-        .foregroundStyle(modeColor)
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(modeColor.opacity(0.18))
+        .foregroundStyle(.white)
+        .padding(.vertical, 7)
+        .padding(.horizontal, 12)
+        .background(modeColor)
         .clipShape(Capsule())
     }
 
-    private var pauseIconName: String {
-        playback.isPaused ? "play.fill" : "pause.fill"
+    // ✅ fixed: pill-shaped play/pause that matches toolbar hit shape
+    private var playPausePillButton: some View {
+        Button {
+            playback.togglePause()
+        } label: {
+            Image(systemName: pauseIconName)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .background(
+                    Capsule()
+                        .fill(Color.black.opacity(0.40))   // semi-transparent
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                )
+        }
+        .buttonStyle(.plain)
+        .contentShape(Capsule())
+        .disabled(!playback.isPartialPlaying && !playback.isPlaying && !playback.isPaused)
     }
 
     var body: some View {
@@ -55,9 +84,12 @@ struct PlaybackScreenView: View {
             )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Back
+                // Back: stop audio on exit
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button { isPresented = false } label: {
+                    Button {
+                        playback.stop()
+                        isPresented = false
+                    } label: {
                         Image(systemName: "chevron.left")
                     }
                 }
@@ -67,25 +99,16 @@ struct PlaybackScreenView: View {
                     modeBadge
                 }
 
-                // Pause + Stop
+                // ✅ Only Play/Pause button
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    HStack(spacing: 10) {
-                        Button { playback.togglePause() } label: {
-                            Image(systemName: pauseIconName)
-                        }
-                        .disabled(!playback.isPartialPlaying && !playback.isPlaying && !playback.isPaused)
-
-                        Button {
-                            playback.stop()
-                            isPresented = false
-                        } label: {
-                            Image(systemName: "stop.fill")
-                        }
-                    }
+                    playPausePillButton
                 }
             }
             .onChange(of: playback.isPartialPlaying) { playing in
                 if playing == false { isPresented = false }
+            }
+            .onDisappear {
+                playback.stop()
             }
         }
     }
