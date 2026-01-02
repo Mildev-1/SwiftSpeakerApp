@@ -12,13 +12,9 @@ struct ContentView: View {
     @State private var showAlert = false
     @State private var alertMessage = ""
 
-    // Edit screen state (full-screen overlay)
     @State private var editingItem: AudioItem? = nil
-
-    // ✅ Practice screen state (full-screen overlay)
     @State private var practicingItem: AudioItem? = nil
 
-    // ✅ delete confirmation state
     @State private var pendingDeleteItem: AudioItem? = nil
 
     private var mp3Type: UTType {
@@ -31,11 +27,10 @@ struct ContentView: View {
                 VStack(spacing: 12) {
                     header
 
-                    // ✅ Use List for native swipe actions
                     List {
                         ForEach(library.items) { item in
                             AudioGridRowView(
-                                scriptName: bindingForScriptName(itemID: item.id),
+                                scriptName: item.scriptName,
                                 onEditTapped: {
                                     withAnimation(.easeInOut(duration: 0.25)) {
                                         practicingItem = nil
@@ -66,7 +61,6 @@ struct ContentView: View {
                 }
                 .padding(.top, 8)
 
-                // Full screen edit view that slides in from LEFT
                 if let item = editingItem {
                     AudioEditView(
                         item: item,
@@ -80,7 +74,6 @@ struct ContentView: View {
                     .zIndex(10)
                 }
 
-                // ✅ Full screen practice view that slides in from RIGHT
                 if let item = practicingItem {
                     PracticeView(
                         item: item,
@@ -130,7 +123,6 @@ struct ContentView: View {
             } message: {
                 Text(alertMessage)
             }
-            // ✅ Confirmation popup for delete
             .alert(
                 "Remove this audio?",
                 isPresented: Binding(
@@ -144,12 +136,9 @@ struct ContentView: View {
                 Button("Delete", role: .destructive) {
                     guard let item = pendingDeleteItem else { return }
 
-                    // close editor if deleting the opened item
                     if editingItem?.id == item.id {
                         withAnimation(.easeInOut(duration: 0.25)) { editingItem = nil }
                     }
-
-                    // close practice if deleting the opened item
                     if practicingItem?.id == item.id {
                         withAnimation(.easeInOut(duration: 0.25)) { practicingItem = nil }
                     }
@@ -182,16 +171,6 @@ struct ContentView: View {
             .accessibilityLabel("Add MP3")
         }
         .padding(.horizontal)
-    }
-
-    private func bindingForScriptName(itemID: UUID) -> Binding<String> {
-        Binding(
-            get: { library.items.first(where: { $0.id == itemID })?.scriptName ?? "" },
-            set: { newValue in
-                // ✅ Correct labels for your AudioLibrary:
-                library.updateScriptName(id: itemID, name: newValue)
-            }
-        )
     }
 
     private func handleImporterResult(_ result: Result<[URL], Error>) {

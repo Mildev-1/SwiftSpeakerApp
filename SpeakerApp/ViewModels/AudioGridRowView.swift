@@ -1,31 +1,48 @@
 import SwiftUI
 
-/// MODIFIED FILE: AudioGridRowView.swift
 struct AudioGridRowView: View {
-    @Binding var scriptName: String
+    let scriptName: String
     let onEditTapped: () -> Void
     let onPracticeTapped: () -> Void
 
     var body: some View {
-        HStack(spacing: 12) {
-            TextField("MyScript01", text: $scriptName)
-                .textFieldStyle(.roundedBorder)
-                .frame(maxWidth: .infinity)
+        HStack(alignment: .top, spacing: 12) {
 
-            Button("Edit") {
-                onEditTapped()
-            }
-            .buttonStyle(.bordered)
+            // Multi-line title on the left
+            Text(scriptName.isEmpty ? "Untitled" : scriptName)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .multilineTextAlignment(.leading)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
-            // ✅ New Practice button (right side of Edit)
-            Button("Practice") {
-                onPracticeTapped()
+            // Buttons on the right
+            HStack(spacing: 10) {
+                Button(action: onEditTapped) {
+                    Image(systemName: "pencil")
+                        .font(.headline)
+                        .frame(width: 40, height: 34)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Edit")
+
+                Button(action: onPracticeTapped) {
+                    Image(systemName: "person.wave.2")
+                        .font(.headline)
+                        .frame(width: 40, height: 34)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityLabel("Practice")
             }
-            .buttonStyle(.bordered)
         }
         .padding(12)
         .frame(maxWidth: .infinity)
         .background(.thinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
     }
 }
