@@ -15,16 +15,17 @@ final class TranscriptViewModel: ObservableObject {
     @Published var fineTunesBySubchunk: [String: SegmentFineTune] = [:]
 
     @Published var playbackSettings: PlaybackSettings = PlaybackSettings()
-
-    // persisted per item (stored in CutPlanRecord)
     @Published var preferredLanguageCode: String = "auto"
+
+    /// ✅ Practice: persisted flags (SentenceChunk.id)
+    @Published var flaggedSentenceIDs: Set<String> = []
 
     @Published private(set) var hasCachedTranscript: Bool = false
 
     private let transcriptStore = TranscriptStore.shared
     private let cutPlanStore = CutPlanStore.shared
 
-    private let allowedLangs: Set<String> = ["auto","en","es","fr","pt","it","de","pl"]
+    private let allowedLangs: Set<String> = ["auto","en","pl","es","de","fr","it","uk","ru","pt"]
 
     private func normalizeLang(_ s: String) -> String {
         let x = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -67,12 +68,17 @@ final class TranscriptViewModel: ObservableObject {
                 }
 
                 playbackSettings = plan.playbackSettings.clamped()
+
                 preferredLanguageCode = normalizeLang(plan.preferredLanguageCode)
+
+                // ✅ flags
+                flaggedSentenceIDs = plan.flaggedSentenceIDs.intersection(validIDs)
             } else {
                 sentenceEdits = [:]
                 manualCutsBySentence = [:]
                 fineTunesBySubchunk = [:]
                 playbackSettings = PlaybackSettings()
+                flaggedSentenceIDs = []
 
                 if let rl = recordLang {
                     preferredLanguageCode = normalizeLang(rl)
@@ -95,7 +101,8 @@ final class TranscriptViewModel: ObservableObject {
                 fineTunesBySubchunk: fineTunesBySubchunk,
                 playbackSettings: playbackSettings.clamped(),
                 preferredLanguageCode: normalizeLang(preferredLanguageCode),
-                updatedAt: Date()
+                updatedAt: Date(),
+                flaggedSentenceIDs: flaggedSentenceIDs
             )
             try cutPlanStore.save(itemID: itemID, record: plan)
         } catch {
@@ -143,6 +150,23 @@ final class TranscriptViewModel: ObservableObject {
         saveCutPlan(itemID: itemID)
     }
 
+    // MARK: - Practice flags
+
+    func isFlagged(sentenceID: String) -> Bool {
+        flaggedSentenceIDs.contains(sentenceID)
+    }
+
+    func toggleFlag(itemID: UUID, sentenceID: String) {
+        if flaggedSentenceIDs.contains(sentenceID) {
+            flaggedSentenceIDs.remove(sentenceID)
+        } else {
+            flaggedSentenceIDs.insert(sentenceID)
+        }
+        saveCutPlan(itemID: itemID)
+    }
+
+    // MARK: - Transcription
+
     func transcribeFromMP3(
         itemID: UUID,
         mp3URL: URL,
@@ -173,7 +197,6 @@ final class TranscriptViewModel: ObservableObject {
                 languageCode: requested,
                 model: model
             ) { [weak self] s in
-                // ✅ Avoid `Task {}` to prevent collision with any custom `Task` type in your project.
                 DispatchQueue.main.async {
                     self?.statusText = s
                 }
@@ -188,6 +211,7 @@ final class TranscriptViewModel: ObservableObject {
 
             let langToStore: String? = output.languageUsed ?? (requested == "auto" ? nil : requested)
 
+            // ✅ FIX: TranscriptRecord requires model:
             let record = TranscriptRecord(
                 text: output.text,
                 words: output.words,
@@ -196,6 +220,7 @@ final class TranscriptViewModel: ObservableObject {
             )
             try transcriptStore.save(itemID: itemID, record: record)
 
+            // prune persisted maps by new sentence IDs
             let validIDs = Set(sentenceChunks.map { $0.id })
             sentenceEdits = sentenceEdits.filter { validIDs.contains($0.key) }
             manualCutsBySentence = manualCutsBySentence.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
@@ -203,6 +228,9 @@ final class TranscriptViewModel: ObservableObject {
                 let sid = key.split(separator: "|").first.map(String.init) ?? ""
                 return validIDs.contains(sid)
             }
+
+            // keep only flags that still match sentence IDs
+            flaggedSentenceIDs = flaggedSentenceIDs.intersection(validIDs)
 
             saveCutPlan(itemID: itemID)
 

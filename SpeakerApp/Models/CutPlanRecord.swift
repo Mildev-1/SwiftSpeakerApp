@@ -1,17 +1,22 @@
 import Foundation
 
+/// Per-AudioItem persisted state:
+/// - sentence text edits
+/// - manual pause cut times (per sentence)
+/// - fine-tunes per subchunk
+/// - playback settings
+/// - preferred transcription language
+/// - ✅ flagged sentence IDs (Practice)
 struct CutPlanRecord: Codable, Hashable {
     var sentenceEdits: [String: String]
     var manualCutsBySentence: [String: [Double]]
     var fineTunesBySubchunk: [String: SegmentFineTune]
-
-    /// ✅ persisted per item
     var playbackSettings: PlaybackSettings
-
-    /// ✅ NEW: preferred transcription language for this item ("auto", "en", "es", ...)
     var preferredLanguageCode: String
-
     var updatedAt: Date
+
+    /// ✅ NEW: flagged sentence IDs (SentenceChunk.id)
+    var flaggedSentenceIDs: Set<String>
 
     // legacy
     private var legacyManualCutTimes: [Double]?
@@ -22,7 +27,8 @@ struct CutPlanRecord: Codable, Hashable {
         fineTunesBySubchunk: [String: SegmentFineTune] = [:],
         playbackSettings: PlaybackSettings = PlaybackSettings(),
         preferredLanguageCode: String = "auto",
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        flaggedSentenceIDs: Set<String> = []
     ) {
         self.sentenceEdits = sentenceEdits
         self.manualCutsBySentence = manualCutsBySentence
@@ -30,6 +36,7 @@ struct CutPlanRecord: Codable, Hashable {
         self.playbackSettings = playbackSettings
         self.preferredLanguageCode = preferredLanguageCode
         self.updatedAt = updatedAt
+        self.flaggedSentenceIDs = flaggedSentenceIDs
         self.legacyManualCutTimes = nil
     }
 
@@ -40,6 +47,7 @@ struct CutPlanRecord: Codable, Hashable {
         case playbackSettings
         case preferredLanguageCode
         case updatedAt
+        case flaggedSentenceIDs
         case manualCutTimes // legacy
     }
 
@@ -50,12 +58,13 @@ struct CutPlanRecord: Codable, Hashable {
         self.manualCutsBySentence = (try? c.decode([String: [Double]].self, forKey: .manualCutsBySentence)) ?? [:]
         self.fineTunesBySubchunk = (try? c.decode([String: SegmentFineTune].self, forKey: .fineTunesBySubchunk)) ?? [:]
         self.playbackSettings = (try? c.decode(PlaybackSettings.self, forKey: .playbackSettings)) ?? PlaybackSettings()
-
-        // ✅ backward compatible: older JSON won't have this key
         self.preferredLanguageCode = (try? c.decode(String.self, forKey: .preferredLanguageCode)) ?? "auto"
-
         self.updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? Date()
 
+        // ✅ backward compatible: older JSON won’t have this
+        self.flaggedSentenceIDs = (try? c.decode(Set<String>.self, forKey: .flaggedSentenceIDs)) ?? []
+
+        // legacy manual cuts
         self.legacyManualCutTimes = try? c.decode([Double].self, forKey: .manualCutTimes)
         if manualCutsBySentence.isEmpty, let legacy = legacyManualCutTimes, !legacy.isEmpty {
             self.manualCutsBySentence["_legacy"] = legacy.sorted()
@@ -70,6 +79,7 @@ struct CutPlanRecord: Codable, Hashable {
         try c.encode(playbackSettings, forKey: .playbackSettings)
         try c.encode(preferredLanguageCode, forKey: .preferredLanguageCode)
         try c.encode(updatedAt, forKey: .updatedAt)
+        try c.encode(flaggedSentenceIDs, forKey: .flaggedSentenceIDs)
         // do not write legacy field anymore
     }
 }

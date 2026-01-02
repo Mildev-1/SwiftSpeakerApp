@@ -4,41 +4,47 @@ import Foundation
 struct PlaybackSettings: Codable, Hashable {
     var repeatPracticeEnabled: Bool
     var practiceRepeats: Int              // 1...3
-    var practiceSilenceMultiplier: Double // 0.5...2.0
+    var practiceSilenceMultiplier: Double // 0.2...3.0 (UI range)
     var sentencesPauseOnly: Bool          // only used when repeatPracticeEnabled == true
 
-    /// ✅ NEW: font scale for Full Screen Playback (1.0...3.0)
+    /// Font scale for Full Screen Playback (1.0...2.2)
     var playbackFontScale: Double
+
+    /// ✅ NEW: When ON, Partial Play will play only flagged sentences.
+    var flaggedOnly: Bool
 
     init(
         repeatPracticeEnabled: Bool = false,
         practiceRepeats: Int = 2,
         practiceSilenceMultiplier: Double = 1.0,
         sentencesPauseOnly: Bool = false,
-        playbackFontScale: Double = 1.0
+        playbackFontScale: Double = 1.0,
+        flaggedOnly: Bool = false
     ) {
         self.repeatPracticeEnabled = repeatPracticeEnabled
         self.practiceRepeats = practiceRepeats
         self.practiceSilenceMultiplier = practiceSilenceMultiplier
         self.sentencesPauseOnly = sentencesPauseOnly
         self.playbackFontScale = playbackFontScale
+        self.flaggedOnly = flaggedOnly
     }
 
     func clamped() -> PlaybackSettings {
         var x = self
         x.practiceRepeats = min(max(x.practiceRepeats, 1), 3)
-        x.practiceSilenceMultiplier = min(max(x.practiceSilenceMultiplier, 0.5), 2.0)
+        x.practiceSilenceMultiplier = min(max(x.practiceSilenceMultiplier, 0.2), 3.0)
         x.playbackFontScale = min(max(x.playbackFontScale, 1.0), 2.2)
         return x
     }
 
-    // ✅ Backward-compatible decode (older saved JSON won’t have playbackFontScale)
+    // Backward-compatible decode (older saved JSON won’t have new keys)
     enum CodingKeys: String, CodingKey {
         case repeatPracticeEnabled
         case practiceRepeats
         case practiceSilenceMultiplier
         case sentencesPauseOnly
         case playbackFontScale
+        case flaggedOnly
     }
 
     init(from decoder: Decoder) throws {
@@ -48,6 +54,7 @@ struct PlaybackSettings: Codable, Hashable {
         self.practiceSilenceMultiplier = (try? c.decode(Double.self, forKey: .practiceSilenceMultiplier)) ?? 1.0
         self.sentencesPauseOnly = (try? c.decode(Bool.self, forKey: .sentencesPauseOnly)) ?? false
         self.playbackFontScale = (try? c.decode(Double.self, forKey: .playbackFontScale)) ?? 1.0
+        self.flaggedOnly = (try? c.decode(Bool.self, forKey: .flaggedOnly)) ?? false
         self = self.clamped()
     }
 
@@ -58,5 +65,6 @@ struct PlaybackSettings: Codable, Hashable {
         try c.encode(practiceSilenceMultiplier, forKey: .practiceSilenceMultiplier)
         try c.encode(sentencesPauseOnly, forKey: .sentencesPauseOnly)
         try c.encode(playbackFontScale, forKey: .playbackFontScale)
+        try c.encode(flaggedOnly, forKey: .flaggedOnly)
     }
 }

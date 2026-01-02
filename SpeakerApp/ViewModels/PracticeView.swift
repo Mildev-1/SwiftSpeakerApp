@@ -17,6 +17,9 @@ struct PracticeView: View {
     @State private var practiceSilenceMultiplier: Double = 1.0
     @State private var sentencesPauseOnly: Bool = false
 
+    // ✅ NEW: Flagged-only toggle (persisted via PlaybackSettings)
+    @State private var flaggedOnly: Bool = false
+
     // Font scale slider for Full Screen Playback (persisted per item)
     @State private var playbackFontScale: Double = 1.0
 
@@ -37,6 +40,7 @@ struct PracticeView: View {
                     VStack(spacing: 18) {
                         headerSection
                         playbackSection
+                        sentencesSection
                         errorSection
                     }
                     .frame(maxWidth: 720)
@@ -56,12 +60,14 @@ struct PracticeView: View {
             practiceSilenceMultiplier = s.practiceSilenceMultiplier
             sentencesPauseOnly = s.sentencesPauseOnly
             playbackFontScale = s.playbackFontScale
+            flaggedOnly = s.flaggedOnly
         }
         .onChange(of: isRepeatPracticeEnabled) { _ in persistPlaybackSettings() }
         .onChange(of: practiceRepeats) { _ in persistPlaybackSettings() }
         .onChange(of: practiceSilenceMultiplier) { _ in persistPlaybackSettings() }
         .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
         .onChange(of: playbackFontScale) { _ in persistPlaybackSettings() }
+        .onChange(of: flaggedOnly) { _ in persistPlaybackSettings() }
 
         .fullScreenCover(isPresented: $showPlaybackScreen) {
             PlaybackScreenView(
@@ -79,7 +85,8 @@ struct PracticeView: View {
             practiceRepeats: practiceRepeats,
             practiceSilenceMultiplier: practiceSilenceMultiplier,
             sentencesPauseOnly: sentencesPauseOnly,
-            playbackFontScale: playbackFontScale
+            playbackFontScale: playbackFontScale,
+            flaggedOnly: flaggedOnly
         ).clamped()
         transcriptVM.setPlaybackSettings(itemID: item.id, s)
     }
@@ -152,7 +159,7 @@ struct PracticeView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // 2) Repeat practice toggle + uncovered options
+            // 2) Repeat practice toggle + uncovered options + ✅ Flagged Only
             VStack(spacing: 10) {
                 Toggle("Repeat practice", isOn: $isRepeatPracticeEnabled)
                     .toggleStyle(.switch)
@@ -176,8 +183,7 @@ struct PracticeView: View {
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
-                            // Match your clamp (0.5...2.0)
-                            Slider(value: $practiceSilenceMultiplier, in: 0.5...2.0, step: 0.05)
+                            Slider(value: $practiceSilenceMultiplier, in: 0.2...3.0, step: 0.05)
                         }
 
                         Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
@@ -185,6 +191,11 @@ struct PracticeView: View {
                     }
                     .padding(.top, 6)
                 }
+
+                // ✅ NEW: Flagged Only toggle (placed at bottom of this card, as requested)
+                Toggle("Flagged Only", isOn: $flaggedOnly)
+                    .toggleStyle(.switch)
+                    .padding(.top, 6)
             }
             .padding(12)
             .background(.thinMaterial)
@@ -235,9 +246,21 @@ struct PracticeView: View {
                         )
                         : .beepBetweenCuts
 
+                    // ✅ apply Flagged Only filter when enabled
+                    let chunksToPlay: [SentenceChunk] = {
+                        if flaggedOnly {
+                            return transcriptVM.sentenceChunks.filter { transcriptVM.flaggedSentenceIDs.contains($0.id) }
+                        } else {
+                            return transcriptVM.sentenceChunks
+                        }
+                    }()
+
+                    // If flaggedOnly is ON but nothing is flagged, do nothing.
+                    guard !chunksToPlay.isEmpty else { return }
+
                     playback.togglePartialPlay(
                         url: storedMP3URL,
-                        chunks: transcriptVM.sentenceChunks,
+                        chunks: chunksToPlay,
                         manualCutsBySentence: transcriptVM.manualCutsBySentence,
                         fineTunesBySubchunk: transcriptVM.fineTunesBySubchunk,
                         mode: mode
@@ -250,7 +273,11 @@ struct PracticeView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
-                .disabled(transcriptVM.sentenceChunks.isEmpty || !FileManager.default.fileExists(atPath: storedMP3URL.path))
+                .disabled(
+                    !FileManager.default.fileExists(atPath: storedMP3URL.path)
+                    || transcriptVM.sentenceChunks.isEmpty
+                    || (flaggedOnly && transcriptVM.flaggedSentenceIDs.isEmpty)
+                )
 
                 Button { playback.cycleLoopCount() } label: {
                     HStack(spacing: 8) {
@@ -276,6 +303,70 @@ struct PracticeView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else if flaggedOnly && transcriptVM.flaggedSentenceIDs.isEmpty {
+                Text("Flagged Only is ON, but no sentences are flagged.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    // ✅ NEW: Sentences list for flagging (no edit popup)
+    private var sentencesSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if transcriptVM.sentenceChunks.isEmpty {
+                EmptyView()
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Sentences")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
+                            let isFlagged = transcriptVM.isFlagged(sentenceID: chunk.id)
+                            let textToShow = transcriptVM.displayText(for: chunk)
+
+                            Button {
+                                transcriptVM.toggleFlag(itemID: item.id, sentenceID: chunk.id)
+                            } label: {
+                                HStack(alignment: .top, spacing: 10) {
+                                    Text("\(idx + 1).")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 34, alignment: .trailing)
+
+                                    Text(textToShow)
+                                        .foregroundStyle(.primary)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(10)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .fill(.thinMaterial)
+                                        )
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(.quaternary, lineWidth: 1)
+                                        )
+
+                                    Image(systemName: isFlagged ? "flag.fill" : "flag")
+                                        .font(.headline)
+                                        .foregroundStyle(isFlagged ? .orange : .secondary)
+                                        .frame(width: 28, height: 28, alignment: .center)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .padding(12)
+                .background(.thinMaterial)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .stroke(.quaternary, lineWidth: 1)
+                )
             }
         }
     }
