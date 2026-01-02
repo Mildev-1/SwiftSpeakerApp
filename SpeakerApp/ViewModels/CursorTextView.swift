@@ -6,6 +6,9 @@ struct CursorTextView: UIViewRepresentable {
     @Binding var selectedRange: NSRange
     @Binding var isFocused: Bool
 
+    var isEditable: Bool
+    @Binding var resignFocusToken: Int
+
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
         tv.isScrollEnabled = true
@@ -19,9 +22,19 @@ struct CursorTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.isEditable = isEditable
+
         if uiView.text != text { uiView.text = text }
+
         if uiView.selectedRange.location != selectedRange.location || uiView.selectedRange.length != selectedRange.length {
             uiView.selectedRange = selectedRange
+        }
+
+        // ✅ Resign focus when token changes
+        if context.coordinator.lastResignToken != resignFocusToken {
+            context.coordinator.lastResignToken = resignFocusToken
+            uiView.resignFirstResponder()
+            isFocused = false
         }
     }
 
@@ -29,7 +42,12 @@ struct CursorTextView: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let parent: CursorTextView
-        init(_ parent: CursorTextView) { self.parent = parent }
+        var lastResignToken: Int = 0
+
+        init(_ parent: CursorTextView) {
+            self.parent = parent
+            self.lastResignToken = parent.resignFocusToken
+        }
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.isFocused = true

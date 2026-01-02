@@ -10,22 +10,17 @@ final class TranscriptViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var statusText: String = ""
 
-    // ✅ Manual overlay plan
-    @Published var sentenceEdits: [String: String] = [:]              // chunk.id -> edited text (with ⏸️)
-    @Published var manualCutsBySentence: [String: [Double]] = [:]     // chunk.id -> [cut times]
+    // Manual overlay plan
+    @Published var sentenceEdits: [String: String] = [:]
+    @Published var manualCutsBySentence: [String: [Double]] = [:]
+
+    // ✅ Fine tunes for subchunks
+    @Published var fineTunesBySubchunk: [String: SegmentFineTune] = [:]
 
     @Published private(set) var hasCachedTranscript: Bool = false
 
     private let transcriptStore = TranscriptStore.shared
     private let cutPlanStore = CutPlanStore.shared
-
-    /// Flattened manual cut times (used by playback)
-    var manualCutTimesFlattened: [Double] {
-        manualCutsBySentence
-            .filter { $0.key != "_legacy" }
-            .flatMap { $0.value }
-            .sorted()
-    }
 
     func loadIfAvailable(itemID: UUID) {
         do {
@@ -48,14 +43,19 @@ final class TranscriptViewModel: ObservableObject {
                 let validIDs = Set(sentenceChunks.map { $0.id })
                 sentenceEdits = plan.sentenceEdits.filter { validIDs.contains($0.key) }
 
-                // keep only cuts for valid sentences (but also keep legacy bucket if present)
                 var cuts = plan.manualCutsBySentence
                 cuts = cuts.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
                 manualCutsBySentence = cuts
 
+                // ✅ keep fine tunes only for valid sentenceIDs (key format: sentenceID|...)
+                fineTunesBySubchunk = plan.fineTunesBySubchunk.filter { key, _ in
+                    let sid = key.split(separator: "|").first.map(String.init) ?? ""
+                    return validIDs.contains(sid)
+                }
             } else {
                 sentenceEdits = [:]
                 manualCutsBySentence = [:]
+                fineTunesBySubchunk = [:]
             }
 
         } catch {
@@ -69,6 +69,7 @@ final class TranscriptViewModel: ObservableObject {
             let plan = CutPlanRecord(
                 sentenceEdits: sentenceEdits,
                 manualCutsBySentence: manualCutsBySentence,
+                fineTunesBySubchunk: fineTunesBySubchunk,
                 updatedAt: Date()
             )
             try cutPlanStore.save(itemID: itemID, record: plan)
@@ -81,31 +82,10 @@ final class TranscriptViewModel: ObservableObject {
         sentenceEdits[chunk.id] ?? chunk.text
     }
 
-    /// Called when user taps "Pause" button (quick add).
-    func addManualCutTime(itemID: UUID, chunkID: String, time: Double) {
-        let t = max(0, time)
-        let eps = 0.03
-
-        var list = manualCutsBySentence[chunkID] ?? []
-        if list.contains(where: { abs($0 - t) < eps }) { return }
-
-        list.append(t)
-        list.sort()
-        manualCutsBySentence[chunkID] = list
-        saveCutPlan(itemID: itemID)
-    }
-
-    /// Persist edited text and also sync cuts from ⏸️ markers.
-    /// This is the key: deleting emojis removes corresponding cuts.
-    func syncManualCutsForSentence(
-        itemID: UUID,
-        chunk: SentenceChunk,
-        finalEditedText: String
-    ) {
-        // store text
+    /// Save-driven: sync manual cuts from emoji markers in finalEditedText.
+    func syncManualCutsForSentence(itemID: UUID, chunk: SentenceChunk, finalEditedText: String) {
         sentenceEdits[chunk.id] = finalEditedText
 
-        // recompute cuts from the CURRENT text content
         let newTimes = SentenceCursorTimeMapper.pauseTimesFromEditedText(
             editedText: finalEditedText,
             chunk: chunk,
@@ -118,6 +98,21 @@ final class TranscriptViewModel: ObservableObject {
             manualCutsBySentence[chunk.id] = newTimes
         }
 
+        saveCutPlan(itemID: itemID)
+    }
+
+    // MARK: Fine tune
+
+    func fineTune(for subchunkID: String) -> SegmentFineTune {
+        fineTunesBySubchunk[subchunkID] ?? SegmentFineTune()
+    }
+
+    func setFineTune(itemID: UUID, subchunkID: String, startOffset: Double, endOffset: Double) {
+        let clamp: (Double) -> Double = { min(0.5, max(-0.5, $0)) }
+        fineTunesBySubchunk[subchunkID] = SegmentFineTune(
+            startOffset: clamp(startOffset),
+            endOffset: clamp(endOffset)
+        )
         saveCutPlan(itemID: itemID)
     }
 
@@ -168,10 +163,13 @@ final class TranscriptViewModel: ObservableObject {
             )
             try transcriptStore.save(itemID: itemID, record: record)
 
-            // prune invalid edits/cuts (sentence IDs can change if transcription changes)
             let validIDs = Set(sentenceChunks.map { $0.id })
             sentenceEdits = sentenceEdits.filter { validIDs.contains($0.key) }
             manualCutsBySentence = manualCutsBySentence.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
+            fineTunesBySubchunk = fineTunesBySubchunk.filter { key, _ in
+                let sid = key.split(separator: "|").first.map(String.init) ?? ""
+                return validIDs.contains(sid)
+            }
 
             saveCutPlan(itemID: itemID)
 

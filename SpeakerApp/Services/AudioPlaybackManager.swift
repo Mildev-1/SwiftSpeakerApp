@@ -17,7 +17,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var partialTotal: Int = 0
 
     @Published private(set) var currentSentenceID: String? = nil
-
     @Published var errorMessage: String? = nil
 
     private var player: AVAudioPlayer?
@@ -148,9 +147,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
     }
 
-    // MARK: - Partial playback with manual overlay cuts
+    // MARK: Partial playback (auto boundaries + manual cuts + fine tunes)
 
-    func togglePartialPlay(url: URL, chunks: [SentenceChunk], manualCutTimes: [Double]) {
+    func togglePartialPlay(
+        url: URL,
+        chunks: [SentenceChunk],
+        manualCutsBySentence: [String: [Double]],
+        fineTunesBySubchunk: [String: SegmentFineTune]
+    ) {
         cancelSingleSegment()
         currentSentenceID = nil
 
@@ -159,10 +163,20 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             stop()
             return
         }
-        startPartialPlayback(url: url, chunks: chunks, manualCutTimes: manualCutTimes)
+        startPartialPlayback(
+            url: url,
+            chunks: chunks,
+            manualCutsBySentence: manualCutsBySentence,
+            fineTunesBySubchunk: fineTunesBySubchunk
+        )
     }
 
-    private func startPartialPlayback(url: URL, chunks: [SentenceChunk], manualCutTimes: [Double]) {
+    private func startPartialPlayback(
+        url: URL,
+        chunks: [SentenceChunk],
+        manualCutsBySentence: [String: [Double]],
+        fineTunesBySubchunk: [String: SegmentFineTune]
+    ) {
         stop()
 
         loadIfNeeded(url: url)
@@ -180,8 +194,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         partialTotal = chunks.count
         errorMessage = nil
 
-        let sortedManual = manualCutTimes.sorted()
-
         partialTask?.cancel()
         partialTask = Task { [weak self] in
             guard let self else { return }
@@ -194,25 +206,31 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     self.currentSentenceID = chunk.id
                 }
 
-                // Build subsegments = [sentence start .. manual cut .. manual cut .. sentence end]
                 let eps = 0.03
-                let cutsInSentence = sortedManual
+                let cuts = (manualCutsBySentence[chunk.id] ?? [])
                     .filter { $0 > (chunk.start + eps) && $0 < (chunk.end - eps) }
                     .sorted()
 
                 var points: [Double] = [chunk.start]
-                points.append(contentsOf: cutsInSentence)
+                points.append(contentsOf: cuts)
                 points.append(chunk.end)
 
-                // Play each subsegment, beep between each cut (including manual ones)
                 for j in 0..<(points.count - 1) {
-                    let segStart = points[j]
-                    let segEnd = points[j + 1]
+                    let baseStart = points[j]
+                    let baseEnd = points[j + 1]
+                    let subID = SentenceSubchunkBuilder.subchunkID(sentenceID: chunk.id, start: baseStart, end: baseEnd)
+                    let tune = fineTunesBySubchunk[subID] ?? SegmentFineTune()
 
-                    let ok = await self.playSegment(start: segStart, end: segEnd, with: url)
+                    // Apply offsets but keep inside sentence and keep valid
+                    var s = baseStart + tune.startOffset
+                    var e = baseEnd + tune.endOffset
+                    s = max(chunk.start, min(s, chunk.end))
+                    e = max(chunk.start, min(e, chunk.end))
+                    if e <= s { e = min(chunk.end, s + 0.05) }
+
+                    let ok = await self.playSegment(start: s, end: e, with: url)
                     if !ok || Task.isCancelled { break }
 
-                    // beep between pieces (not after very last piece in entire run)
                     let isLastSentence = (idx == chunks.count - 1)
                     let isLastPieceInSentence = (j == points.count - 2)
                     if !(isLastSentence && isLastPieceInSentence) {
@@ -278,7 +296,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
     private func beep() async {
         #if os(iOS)
-        AudioServicesPlaySystemSound(1104) // "tock"
+        AudioServicesPlaySystemSound(1104)
         #endif
     }
 

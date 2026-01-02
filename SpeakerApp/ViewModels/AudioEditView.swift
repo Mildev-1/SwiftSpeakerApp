@@ -11,7 +11,6 @@ struct AudioEditView: View {
     @StateObject private var transcriptVM = TranscriptViewModel()
 
     @State private var selectedChunk: SentenceChunk? = nil
-    @State private var editingText: String = ""
 
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
@@ -44,27 +43,11 @@ struct AudioEditView: View {
         }
         .sheet(item: $selectedChunk) { chunk in
             SentenceEditSheet(
+                itemID: item.id,
                 chunk: chunk,
                 audioURL: storedMP3URL,
                 words: transcriptVM.words,
-                editedText: Binding(
-                    get: { editingText },
-                    set: { editingText = $0 }
-                ),
-                onAddPauseTime: { t in
-                    transcriptVM.addManualCutTime(itemID: item.id, chunkID: chunk.id, time: t)
-                    // keep text persisted as user types
-                    transcriptVM.sentenceEdits[chunk.id] = editingText
-                    transcriptVM.saveCutPlan(itemID: item.id)
-                },
-                onSaveAndClose: { finalText in
-                    // ✅ This is the fix: resync cut plan from text (removes deleted pauses)
-                    transcriptVM.syncManualCutsForSentence(
-                        itemID: item.id,
-                        chunk: chunk,
-                        finalEditedText: finalText
-                    )
-                }
+                transcriptVM: transcriptVM
             )
         }
     }
@@ -143,7 +126,8 @@ struct AudioEditView: View {
                         playback.togglePartialPlay(
                             url: storedMP3URL,
                             chunks: transcriptVM.sentenceChunks,
-                            manualCutTimes: transcriptVM.manualCutTimesFlattened
+                            manualCutsBySentence: transcriptVM.manualCutsBySentence,
+                            fineTunesBySubchunk: transcriptVM.fineTunesBySubchunk
                         )
                     } label: {
                         Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
@@ -232,7 +216,6 @@ struct AudioEditView: View {
                             let textToShow = transcriptVM.displayText(for: chunk)
 
                             Button {
-                                editingText = textToShow
                                 selectedChunk = chunk
                             } label: {
                                 HStack(alignment: .top, spacing: 10) {
