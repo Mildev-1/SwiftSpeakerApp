@@ -1,8 +1,3 @@
-//
-//  AudioEditView.swift
-//  SpeakerApp
-//
-
 import SwiftUI
 #if os(macOS)
 import AppKit
@@ -15,13 +10,13 @@ struct AudioEditView: View {
     @StateObject private var playback = AudioPlaybackManager()
     @StateObject private var transcriptVM = TranscriptViewModel()
 
-    // Sentence sheet
     @State private var selectedChunk: SentenceChunk? = nil
 
-    // Repeat practice UI state
+    // UI state (loaded from persisted PlaybackSettings)
     @State private var isRepeatPracticeEnabled: Bool = false
-    @State private var practiceRepeats: Int = 2                 // 1..3
-    @State private var practiceSilenceMultiplier: Double = 1.0  // 0.5..2.0
+    @State private var practiceRepeats: Int = 2
+    @State private var practiceSilenceMultiplier: Double = 1.0
+    @State private var sentencesPauseOnly: Bool = false
 
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
@@ -51,7 +46,20 @@ struct AudioEditView: View {
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
             playback.loadIfNeeded(url: storedMP3URL)
+
+            // ✅ Restore per-item settings
+            let s = transcriptVM.playbackSettings.clamped()
+            isRepeatPracticeEnabled = s.repeatPracticeEnabled
+            practiceRepeats = s.practiceRepeats
+            practiceSilenceMultiplier = s.practiceSilenceMultiplier
+            sentencesPauseOnly = s.sentencesPauseOnly
         }
+        // ✅ Persist changes per item
+        .onChange(of: isRepeatPracticeEnabled) { _ in persistPlaybackSettings() }
+        .onChange(of: practiceRepeats) { _ in persistPlaybackSettings() }
+        .onChange(of: practiceSilenceMultiplier) { _ in persistPlaybackSettings() }
+        .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
+
         .sheet(item: $selectedChunk) { chunk in
             SentenceEditSheet(
                 itemID: item.id,
@@ -61,6 +69,16 @@ struct AudioEditView: View {
                 transcriptVM: transcriptVM
             )
         }
+    }
+
+    private func persistPlaybackSettings() {
+        let s = PlaybackSettings(
+            repeatPracticeEnabled: isRepeatPracticeEnabled,
+            practiceRepeats: practiceRepeats,
+            practiceSilenceMultiplier: practiceSilenceMultiplier,
+            sentencesPauseOnly: sentencesPauseOnly
+        ).clamped()
+        transcriptVM.setPlaybackSettings(itemID: item.id, s)
     }
 
     private var background: some View {
@@ -117,7 +135,7 @@ struct AudioEditView: View {
     private var playbackSection: some View {
         VStack(spacing: 12) {
 
-            // ✅ Repeat Practice toggle + controls (ABOVE Play/Stop, below filename)
+            // Repeat practice toggle + controls
             VStack(spacing: 10) {
                 Toggle(isOn: $isRepeatPracticeEnabled) {
                     Text("Repeat practice")
@@ -146,11 +164,16 @@ struct AudioEditView: View {
                                     .foregroundStyle(.secondary)
                             }
 
-                            Slider(
-                                value: $practiceSilenceMultiplier,
-                                in: 0.5...2.0
-                            )
+                            Slider(value: $practiceSilenceMultiplier, in: 0.5...2.0)
                         }
+
+                        // ✅ NEW: sentences only toggle (only in repeat practice mode)
+                        Toggle(isOn: $sentencesPauseOnly) {
+                            Text("Sentences pause only")
+                                .font(.callout)
+                                .fontWeight(.semibold)
+                        }
+                        .toggleStyle(.switch)
                     }
                     .padding(12)
                     .background(.thinMaterial)
@@ -164,32 +187,30 @@ struct AudioEditView: View {
 
             // Play / Stop
             HStack(spacing: 12) {
-                Button {
-                    playback.togglePlay(url: storedMP3URL)
-                } label: {
-                    Label(
-                        playback.isPlaying ? "Pause" : "Play",
-                        systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
-                    )
-                    .frame(maxWidth: .infinity)
+                Button { playback.togglePlay(url: storedMP3URL) } label: {
+                    Label(playback.isPlaying ? "Pause" : "Play",
+                          systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
 
-                Button {
-                    playback.stop()
-                } label: {
+                Button { playback.stop() } label: {
                     Label("Stop", systemImage: "stop.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
             }
 
-            // Partial + Repeat icon (file loop)
+            // Partial Play + file loop
             HStack(spacing: 12) {
                 Button {
                     let mode: AudioPlaybackManager.PartialPlaybackMode =
                         isRepeatPracticeEnabled
-                        ? .repeatPractice(repeats: practiceRepeats, silenceMultiplier: practiceSilenceMultiplier)
+                        ? .repeatPractice(
+                            repeats: practiceRepeats,
+                            silenceMultiplier: practiceSilenceMultiplier,
+                            sentencesPauseOnly: sentencesPauseOnly
+                        )
                         : .beepBetweenCuts
 
                     playback.togglePartialPlay(
@@ -200,18 +221,13 @@ struct AudioEditView: View {
                         mode: mode
                     )
                 } label: {
-                    Label(
-                        playback.isPartialPlaying ? "Partial Stop" : "Partial Play",
-                        systemImage: "scissors"
-                    )
-                    .frame(maxWidth: .infinity)
+                    Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play", systemImage: "scissors")
+                        .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.bordered)
                 .disabled(transcriptVM.sentenceChunks.isEmpty || transcriptVM.isTranscribing)
 
-                Button {
-                    playback.cycleLoopCount()
-                } label: {
+                Button { playback.cycleLoopCount() } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "repeat")
                         Text("×\(playback.loopCount)")
@@ -234,8 +250,6 @@ struct AudioEditView: View {
 
     private var transcriptSection: some View {
         VStack(spacing: 10) {
-
-            // ✅ Sentence list first (this is the "Transcribed text" area)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if transcriptVM.sentenceChunks.isEmpty {
@@ -247,9 +261,7 @@ struct AudioEditView: View {
                             let isActive = (playback.currentSentenceID == chunk.id)
                             let textToShow = transcriptVM.displayText(for: chunk)
 
-                            Button {
-                                selectedChunk = chunk
-                            } label: {
+                            Button { selectedChunk = chunk } label: {
                                 HStack(alignment: .top, spacing: 10) {
                                     Text("\(idx + 1).")
                                         .font(.caption)
@@ -282,7 +294,6 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // ✅ Move "Re-Transcribe" controls BELOW the transcript
             if !transcriptVM.statusText.isEmpty {
                 Text(transcriptVM.statusText)
                     .font(.footnote)
@@ -341,16 +352,4 @@ struct AudioEditView: View {
             }
         }
     }
-}
-
-#Preview {
-    AudioEditView(
-        item: AudioItem(
-            scriptName: "MyScript01",
-            originalFileName: "example_long_long_long.mp3",
-            storedFileName: "example.mp3",
-            storedRelativePath: "example.mp3"
-        ),
-        onClose: {}
-    )
 }

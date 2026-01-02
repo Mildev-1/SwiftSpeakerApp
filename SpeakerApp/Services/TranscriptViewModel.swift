@@ -10,12 +10,12 @@ final class TranscriptViewModel: ObservableObject {
     @Published var errorMessage: String? = nil
     @Published var statusText: String = ""
 
-    // Manual overlay plan
     @Published var sentenceEdits: [String: String] = [:]
     @Published var manualCutsBySentence: [String: [Double]] = [:]
-
-    // ✅ Fine tunes for subchunks
     @Published var fineTunesBySubchunk: [String: SegmentFineTune] = [:]
+
+    /// ✅ NEW: per-item playback settings (persisted in CutPlanRecord)
+    @Published var playbackSettings: PlaybackSettings = PlaybackSettings()
 
     @Published private(set) var hasCachedTranscript: Bool = false
 
@@ -41,21 +41,24 @@ final class TranscriptViewModel: ObservableObject {
 
             if let plan = try cutPlanStore.load(itemID: itemID) {
                 let validIDs = Set(sentenceChunks.map { $0.id })
+
                 sentenceEdits = plan.sentenceEdits.filter { validIDs.contains($0.key) }
 
                 var cuts = plan.manualCutsBySentence
                 cuts = cuts.filter { $0.key == "_legacy" || validIDs.contains($0.key) }
                 manualCutsBySentence = cuts
 
-                // ✅ keep fine tunes only for valid sentenceIDs (key format: sentenceID|...)
                 fineTunesBySubchunk = plan.fineTunesBySubchunk.filter { key, _ in
                     let sid = key.split(separator: "|").first.map(String.init) ?? ""
                     return validIDs.contains(sid)
                 }
+
+                playbackSettings = plan.playbackSettings.clamped()
             } else {
                 sentenceEdits = [:]
                 manualCutsBySentence = [:]
                 fineTunesBySubchunk = [:]
+                playbackSettings = PlaybackSettings()
             }
 
         } catch {
@@ -70,6 +73,7 @@ final class TranscriptViewModel: ObservableObject {
                 sentenceEdits: sentenceEdits,
                 manualCutsBySentence: manualCutsBySentence,
                 fineTunesBySubchunk: fineTunesBySubchunk,
+                playbackSettings: playbackSettings.clamped(),
                 updatedAt: Date()
             )
             try cutPlanStore.save(itemID: itemID, record: plan)
@@ -78,11 +82,15 @@ final class TranscriptViewModel: ObservableObject {
         }
     }
 
+    func setPlaybackSettings(itemID: UUID, _ newValue: PlaybackSettings) {
+        playbackSettings = newValue.clamped()
+        saveCutPlan(itemID: itemID)
+    }
+
     func displayText(for chunk: SentenceChunk) -> String {
         sentenceEdits[chunk.id] ?? chunk.text
     }
 
-    /// Save-driven: sync manual cuts from emoji markers in finalEditedText.
     func syncManualCutsForSentence(itemID: UUID, chunk: SentenceChunk, finalEditedText: String) {
         sentenceEdits[chunk.id] = finalEditedText
 
@@ -100,8 +108,6 @@ final class TranscriptViewModel: ObservableObject {
 
         saveCutPlan(itemID: itemID)
     }
-
-    // MARK: Fine tune
 
     func fineTune(for subchunkID: String) -> SegmentFineTune {
         fineTunesBySubchunk[subchunkID] ?? SegmentFineTune()
