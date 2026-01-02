@@ -258,14 +258,17 @@ struct AudioEditView: View {
 
     private var transcriptSection: some View {
         VStack(spacing: 10) {
-            // ✅ Back to embedded scroll list (no auto-scroll here)
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if transcriptVM.sentenceChunks.isEmpty {
-                        Text(transcriptVM.isTranscribing ? "Transcribing…" : "No transcript yet.")
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 8)
-                    } else {
+
+            // ✅ No nested ScrollView here.
+            // This list will scroll together with the outer Edit screen ScrollView.
+            VStack(spacing: 10) {
+                if transcriptVM.sentenceChunks.isEmpty {
+                    Text(transcriptVM.isTranscribing ? "Transcribing…" : "No transcript yet.")
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    LazyVStack(alignment: .leading, spacing: 10) {
                         ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
                             let isActive = (playback.currentSentenceID == chunk.id)
                             let textToShow = transcriptVM.displayText(for: chunk)
@@ -292,9 +295,8 @@ struct AudioEditView: View {
                         }
                     }
                 }
-                .padding(12)
             }
-            .frame(height: 320)
+            .padding(12)
             .background(.thinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
@@ -348,6 +350,7 @@ struct AudioEditView: View {
         }
         .padding(.top, 6)
     }
+
 
     private var errorSection: some View {
         Group {
