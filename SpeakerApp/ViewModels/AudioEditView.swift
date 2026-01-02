@@ -18,7 +18,9 @@ struct AudioEditView: View {
     @State private var practiceSilenceMultiplier: Double = 1.0
     @State private var sentencesPauseOnly: Bool = false
 
-    // ✅ full-screen playback screen
+    // ✅ NEW: font scale slider for Full Screen Playback (persisted per item)
+    @State private var playbackFontScale: Double = 1.0
+
     @State private var showPlaybackScreen: Bool = false
 
     private var storedMP3URL: URL {
@@ -55,11 +57,13 @@ struct AudioEditView: View {
             practiceRepeats = s.practiceRepeats
             practiceSilenceMultiplier = s.practiceSilenceMultiplier
             sentencesPauseOnly = s.sentencesPauseOnly
+            playbackFontScale = s.playbackFontScale
         }
         .onChange(of: isRepeatPracticeEnabled) { _ in persistPlaybackSettings() }
         .onChange(of: practiceRepeats) { _ in persistPlaybackSettings() }
         .onChange(of: practiceSilenceMultiplier) { _ in persistPlaybackSettings() }
         .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
+        .onChange(of: playbackFontScale) { _ in persistPlaybackSettings() }
 
         .sheet(item: $selectedChunk) { chunk in
             SentenceEditSheet(
@@ -70,8 +74,6 @@ struct AudioEditView: View {
                 transcriptVM: transcriptVM
             )
         }
-
-        // ✅ Full screen playback view (auto-scroll happens there)
         .fullScreenCover(isPresented: $showPlaybackScreen) {
             PlaybackScreenView(
                 item: item,
@@ -87,7 +89,8 @@ struct AudioEditView: View {
             repeatPracticeEnabled: isRepeatPracticeEnabled,
             practiceRepeats: practiceRepeats,
             practiceSilenceMultiplier: practiceSilenceMultiplier,
-            sentencesPauseOnly: sentencesPauseOnly
+            sentencesPauseOnly: sentencesPauseOnly,
+            playbackFontScale: playbackFontScale
         ).clamped()
         transcriptVM.setPlaybackSettings(itemID: item.id, s)
     }
@@ -145,6 +148,29 @@ struct AudioEditView: View {
 
     private var playbackSection: some View {
         VStack(spacing: 12) {
+
+            // ✅ Font size slider (affects Full Screen Playback)
+            VStack(spacing: 8) {
+                HStack {
+                    Text("Playback font size")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text("\(Int(playbackFontScale * 100))%")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Slider(value: $playbackFontScale, in: 1.0...2.2, step: 0.05)
+            }
+            .padding(12)
+            .background(.thinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.quaternary, lineWidth: 1)
+            )
+
             // Repeat practice toggle + controls (persisted)
             VStack(spacing: 10) {
                 Toggle(isOn: $isRepeatPracticeEnabled) {
@@ -231,10 +257,7 @@ struct AudioEditView: View {
                         mode: mode
                     )
 
-                    // ✅ Open playback screen only when starting
-                    if willStart {
-                        showPlaybackScreen = true
-                    }
+                    if willStart { showPlaybackScreen = true }
                 } label: {
                     Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play", systemImage: "scissors")
                         .frame(maxWidth: .infinity)
@@ -256,11 +279,9 @@ struct AudioEditView: View {
         }
     }
 
+    // transcriptSection unchanged from your latest (outer scroll controls it)
     private var transcriptSection: some View {
         VStack(spacing: 10) {
-
-            // ✅ No nested ScrollView here.
-            // This list will scroll together with the outer Edit screen ScrollView.
             VStack(spacing: 10) {
                 if transcriptVM.sentenceChunks.isEmpty {
                     Text(transcriptVM.isTranscribing ? "Transcribing…" : "No transcript yet.")
@@ -350,7 +371,6 @@ struct AudioEditView: View {
         }
         .padding(.top, 6)
     }
-
 
     private var errorSection: some View {
         Group {
