@@ -11,14 +11,19 @@ struct PracticeView: View {
     @StateObject private var playback = AudioPlaybackManager()
     @StateObject private var transcriptVM = TranscriptViewModel()
 
-    // Repeat practice UI (persisted)
-    @State private var isRepeatPracticeEnabled: Bool = false
+    // Sentence shadowing UI (persisted)
+    @State private var isSentenceShadowingEnabled: Bool = false
     @State private var practiceRepeats: Int = 2
     @State private var practiceSilenceMultiplier: Double = 1.0
     @State private var sentencesPauseOnly: Bool = false
 
-    // Flagged-only toggle (persisted via PlaybackSettings)
+    // Flags filter (persisted)
     @State private var flaggedOnly: Bool = false
+
+    // Words shadowing UI (persisted)
+    @State private var isWordsShadowingEnabled: Bool = false
+    @State private var wordPracticeRepeats: Int = 2
+    @State private var wordPracticeSilenceMultiplier: Double = 1.5
 
     // Font scale slider for Full Screen Playback (persisted per item)
     @State private var playbackFontScale: Double = 1.0
@@ -33,12 +38,11 @@ struct PracticeView: View {
         ZStack {
             background
 
-            VStack(spacing: 0) {
+            VStack(spacing: 10) {
                 topBar
 
                 ScrollView {
-                    VStack(spacing: 18) {
-
+                    VStack(spacing: 12) {
                         // 0) Title
                         headerSection
 
@@ -48,42 +52,64 @@ struct PracticeView: View {
                         // 2) Playback font size slider card
                         playbackFontSizeCard
 
-                        // 3) Shadowing / Flagged Only card
-                        shadowingCard
+                        // 3) Sentence Shadowing / Flagged Only card
+                        sentenceShadowingCard
 
-                        // 4) Partial play, repeat × card
+                        // 4) Words Shadowing card
+                        wordsShadowingCard
+
+                        // 5) Partial play, repeat × card
                         partialPlayCard
 
-                        // 5) Sentences list + flags
+                        // 6) Sentences list + flags
                         sentencesSection
 
                         errorSection
                     }
-                    .frame(maxWidth: 720)
-                    .frame(maxWidth: .infinity)
                     .padding(.horizontal, 16)
-                    .padding(.vertical, 18)
+                    .padding(.bottom, 22)
                 }
             }
         }
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
-            playback.loadIfNeeded(url: storedMP3URL)
 
             let s = transcriptVM.playbackSettings.clamped()
-            isRepeatPracticeEnabled = s.repeatPracticeEnabled
+            isSentenceShadowingEnabled = s.repeatPracticeEnabled
             practiceRepeats = s.practiceRepeats
             practiceSilenceMultiplier = s.practiceSilenceMultiplier
             sentencesPauseOnly = s.sentencesPauseOnly
             playbackFontScale = s.playbackFontScale
             flaggedOnly = s.flaggedOnly
+
+            isWordsShadowingEnabled = s.wordShadowingEnabled
+            wordPracticeRepeats = s.wordPracticeRepeats
+            wordPracticeSilenceMultiplier = s.wordPracticeSilenceMultiplier
+
+            // enforce exclusivity on load
+            if isSentenceShadowingEnabled && isWordsShadowingEnabled {
+                isWordsShadowingEnabled = false
+            }
         }
-        .onChange(of: isRepeatPracticeEnabled) { _ in persistPlaybackSettings() }
+        .onDisappear {
+            playback.stop()
+        }
+        .onChange(of: isSentenceShadowingEnabled) { newValue in
+            if newValue { isWordsShadowingEnabled = false }
+            persistPlaybackSettings()
+        }
         .onChange(of: practiceRepeats) { _ in persistPlaybackSettings() }
         .onChange(of: practiceSilenceMultiplier) { _ in persistPlaybackSettings() }
         .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
         .onChange(of: playbackFontScale) { _ in persistPlaybackSettings() }
         .onChange(of: flaggedOnly) { _ in persistPlaybackSettings() }
+
+        .onChange(of: isWordsShadowingEnabled) { newValue in
+            if newValue { isSentenceShadowingEnabled = false }
+            persistPlaybackSettings()
+        }
+        .onChange(of: wordPracticeRepeats) { _ in persistPlaybackSettings() }
+        .onChange(of: wordPracticeSilenceMultiplier) { _ in persistPlaybackSettings() }
 
         .fullScreenCover(isPresented: $showPlaybackScreen) {
             PlaybackScreenView(
@@ -95,17 +121,29 @@ struct PracticeView: View {
         }
     }
 
+    // MARK: - Persistence
+
     private func persistPlaybackSettings() {
+        // enforce mutual exclusivity in saved state
+        let sentenceOn = isSentenceShadowingEnabled && !isWordsShadowingEnabled
+        let wordsOn = isWordsShadowingEnabled && !isSentenceShadowingEnabled
+
         let s = PlaybackSettings(
-            repeatPracticeEnabled: isRepeatPracticeEnabled,
+            repeatPracticeEnabled: sentenceOn,
             practiceRepeats: practiceRepeats,
             practiceSilenceMultiplier: practiceSilenceMultiplier,
             sentencesPauseOnly: sentencesPauseOnly,
             playbackFontScale: playbackFontScale,
-            flaggedOnly: flaggedOnly
+            flaggedOnly: flaggedOnly,
+            wordShadowingEnabled: wordsOn,
+            wordPracticeRepeats: wordPracticeRepeats,
+            wordPracticeSilenceMultiplier: wordPracticeSilenceMultiplier
         ).clamped()
+
         transcriptVM.setPlaybackSettings(itemID: item.id, s)
     }
+
+    // MARK: - UI pieces
 
     private var background: some View {
         Group {
@@ -142,33 +180,26 @@ struct PracticeView: View {
 
     // 0) Title
     private var headerSection: some View {
-        VStack(spacing: 10) {
-            Text(item.scriptName)
-                .font(.title2)
-                .fontWeight(.semibold)
-                .multilineTextAlignment(.center)
-        }
+        Text(item.scriptName)
+            .font(.title2.weight(.semibold))
+            .multilineTextAlignment(.center)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, 4)
     }
 
-    // 1) General play/stop buttons card
+    // 1) full file play/stop
     private var fullFilePlayStopCard: some View {
         HStack(spacing: 12) {
-            Button { playback.togglePlay(url: storedMP3URL) } label: {
-                Label(
-                    playback.isPlaying ? "Pause" : "Play",
-                    systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
-                )
+            Button {
+                playback.togglePlay(url: storedMP3URL)
+            } label: {
+                Label(playback.isPlaying ? "Pause" : "Play",
+                      systemImage: playback.isPlaying ? "pause.fill" : "play.fill")
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .disabled(!FileManager.default.fileExists(atPath: storedMP3URL.path))
-
-            Button { playback.stop() } label: {
-                Label("Stop", systemImage: "stop.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(!playback.isPlaying && !playback.isPartialPlaying)
         }
         .padding(12)
         .background(.thinMaterial)
@@ -179,7 +210,7 @@ struct PracticeView: View {
         )
     }
 
-    // 2) Playback font size slider card
+    // 2) font slider
     private var playbackFontSizeCard: some View {
         VStack(spacing: 8) {
             HStack {
@@ -203,14 +234,13 @@ struct PracticeView: View {
         )
     }
 
-    // 3) Shadowing / Flagged Only card
-    private var shadowingCard: some View {
+    // 3) Sentence Shadowing + Flagged Only
+    private var sentenceShadowingCard: some View {
         VStack(spacing: 10) {
-            // label changed
-            Toggle("Shadowing", isOn: $isRepeatPracticeEnabled)
+            Toggle("Sentence Shadowing", isOn: $isSentenceShadowingEnabled)
                 .toggleStyle(.switch)
 
-            if isRepeatPracticeEnabled {
+            if isSentenceShadowingEnabled {
                 VStack(spacing: 10) {
                     Picker("Repeats", selection: $practiceRepeats) {
                         Text("1").tag(1)
@@ -229,7 +259,7 @@ struct PracticeView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        Slider(value: $practiceSilenceMultiplier, in: 0.2...3.0, step: 0.05)
+                        Slider(value: $practiceSilenceMultiplier, in: 0.5...2.0, step: 0.05)
                     }
 
                     Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
@@ -237,6 +267,8 @@ struct PracticeView: View {
                 }
                 .padding(.top, 6)
             }
+
+            Divider().opacity(0.35)
 
             Toggle("Flagged Only", isOn: $flaggedOnly)
                 .toggleStyle(.switch)
@@ -251,39 +283,104 @@ struct PracticeView: View {
         )
     }
 
-    // 4) Partial play, repeat × card
+    // 4) Words Shadowing
+    private var wordsShadowingCard: some View {
+        let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
+
+        return VStack(spacing: 10) {
+            Toggle("Words Shadowing", isOn: $isWordsShadowingEnabled)
+                .toggleStyle(.switch)
+
+            if isWordsShadowingEnabled {
+                VStack(spacing: 10) {
+                    Picker("Repeats", selection: $wordPracticeRepeats) {
+                        Text("1").tag(1)
+                        Text("2").tag(2)
+                        Text("3").tag(3)
+                        Text("4").tag(4)
+                        Text("5").tag(5)
+                    }
+                    .pickerStyle(.segmented)
+
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Silence multiplier")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("×\(wordPracticeSilenceMultiplier, specifier: "%.2f")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $wordPracticeSilenceMultiplier, in: 0.2...6.0, step: 0.05)
+                    }
+
+                    if wordSegs.isEmpty {
+                        Text("No hard words found. Add 🚀 in Edit to create word segments.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding(.top, 6)
+            }
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
+
+    // 5) Partial play
     private var partialPlayCard: some View {
-        VStack(spacing: 10) {
+        let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
+
+        return VStack(spacing: 10) {
             HStack(spacing: 12) {
                 Button {
                     let willStart = !playback.isPartialPlaying
 
-                    let mode: AudioPlaybackManager.PartialPlaybackMode =
-                        isRepeatPracticeEnabled
-                        ? .repeatPractice(
-                            repeats: practiceRepeats,
-                            silenceMultiplier: practiceSilenceMultiplier,
-                            sentencesPauseOnly: sentencesPauseOnly
+                    if isWordsShadowingEnabled {
+                        guard !wordSegs.isEmpty else { return }
+
+                        playback.togglePartialPlayWordSegments(
+                            url: storedMP3URL,
+                            segments: wordSegs,
+                            repeats: wordPracticeRepeats,
+                            silenceMultiplier: wordPracticeSilenceMultiplier
                         )
-                        : .beepBetweenCuts
+                    } else {
+                        let mode: AudioPlaybackManager.PartialPlaybackMode =
+                            isSentenceShadowingEnabled
+                            ? .repeatPractice(
+                                repeats: practiceRepeats,
+                                silenceMultiplier: practiceSilenceMultiplier,
+                                sentencesPauseOnly: sentencesPauseOnly
+                            )
+                            : .beepBetweenCuts
 
-                    let chunksToPlay: [SentenceChunk] = {
-                        if flaggedOnly {
-                            return transcriptVM.sentenceChunks.filter { transcriptVM.flaggedSentenceIDs.contains($0.id) }
-                        } else {
-                            return transcriptVM.sentenceChunks
-                        }
-                    }()
+                        let chunksToPlay: [SentenceChunk] = {
+                            if flaggedOnly {
+                                return transcriptVM.sentenceChunks.filter { transcriptVM.flaggedSentenceIDs.contains($0.id) }
+                            } else {
+                                return transcriptVM.sentenceChunks
+                            }
+                        }()
 
-                    guard !chunksToPlay.isEmpty else { return }
+                        guard !chunksToPlay.isEmpty else { return }
 
-                    playback.togglePartialPlay(
-                        url: storedMP3URL,
-                        chunks: chunksToPlay,
-                        manualCutsBySentence: transcriptVM.manualCutsBySentence,
-                        fineTunesBySubchunk: transcriptVM.fineTunesBySubchunk,
-                        mode: mode
-                    )
+                        playback.togglePartialPlay(
+                            url: storedMP3URL,
+                            chunks: chunksToPlay,
+                            manualCutsBySentence: transcriptVM.manualCutsBySentence,
+                            fineTunesBySubchunk: transcriptVM.fineTunesBySubchunk,
+                            mode: mode
+                        )
+                    }
 
                     if willStart { showPlaybackScreen = true }
                 } label: {
@@ -295,6 +392,7 @@ struct PracticeView: View {
                     !FileManager.default.fileExists(atPath: storedMP3URL.path)
                     || transcriptVM.sentenceChunks.isEmpty
                     || (flaggedOnly && transcriptVM.flaggedSentenceIDs.isEmpty)
+                    || (isWordsShadowingEnabled && wordSegs.isEmpty)
                 )
 
                 Button { playback.cycleLoopCount() } label: {
@@ -308,18 +406,6 @@ struct PracticeView: View {
                 }
                 .buttonStyle(.bordered)
             }
-
-            if transcriptVM.sentenceChunks.isEmpty {
-                Text("No transcript available. Use Edit → Extract Text to enable partial practice.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else if flaggedOnly && transcriptVM.flaggedSentenceIDs.isEmpty {
-                Text("Flagged Only is ON, but no sentences are flagged.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
         }
         .padding(12)
         .background(.thinMaterial)
@@ -330,7 +416,7 @@ struct PracticeView: View {
         )
     }
 
-    // 5) Sentences list for flagging
+    // 6) Sentences list + flags (existing)
     private var sentencesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if transcriptVM.sentenceChunks.isEmpty {
@@ -391,13 +477,156 @@ struct PracticeView: View {
 
     private var errorSection: some View {
         Group {
-            if let msg = playback.errorMessage {
+            if let msg = playback.errorMessage, !msg.isEmpty {
                 Text(msg)
                     .font(.footnote)
                     .foregroundStyle(.red)
-                    .multilineTextAlignment(.center)
-                    .padding(.top, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(.thinMaterial)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(.quaternary, lineWidth: 1)
+                    )
             }
         }
+    }
+
+    // MARK: - Word segment extraction (reflection-based, compile-safe)
+
+    private func buildWordSegments(flaggedOnly: Bool) -> [AudioPlaybackManager.TimedSegment] {
+        // We try to read these from TranscriptViewModel without depending on concrete types:
+        // - hard words dict: [sentenceID: [HardWordLike]]
+        // - fine tunes dict: [hardWordID: SegmentFineTuneLike]
+        // We accept multiple property names to be robust.
+
+        let hardWordsAny = transcriptVM.reflectValue(
+            namedAnyOf: ["hardWordsBySentence", "hardWordsBySentenceID", "hardWordsMapBySentence", "hardWords"]
+        )
+
+        guard let dict = hardWordsAny as? AnyDictionary else {
+            return []
+        }
+
+        // sentence bounds for clamping
+        let sentenceBounds: [String: (Double, Double)] = Dictionary(uniqueKeysWithValues: transcriptVM.sentenceChunks.map { ($0.id, ($0.start, $0.end)) })
+
+        // fine tunes dict (optional)
+        let fineTunesAny = transcriptVM.reflectValue(
+            namedAnyOf: ["fineTunesByHardWord", "fineTunesByHardWordID", "hardWordFineTunes", "hardWordFineTuneByID"]
+        )
+
+        let fineTunesDict = fineTunesAny as? AnyDictionary
+
+        var out: [AudioPlaybackManager.TimedSegment] = []
+
+        for (sentenceKeyAny, listAny) in dict.pairs {
+            guard let sentenceID = sentenceKeyAny as? String else { continue }
+            if flaggedOnly && !transcriptVM.flaggedSentenceIDs.contains(sentenceID) { continue }
+
+            guard let arr = listAny as? [Any] else { continue }
+
+            for hw in arr {
+                // extract id/start/end from hard word
+                let hwID = Mirror(reflecting: hw).child(namedAnyOf: ["id", "wordID", "uuid"]) as? String
+                let baseStart = Mirror(reflecting: hw).child(namedAnyOf: ["baseStart", "start"]) as? Double
+                let baseEnd = Mirror(reflecting: hw).child(namedAnyOf: ["baseEnd", "end"]) as? Double
+
+                guard let s0 = baseStart, let e0 = baseEnd else { continue }
+                var s = s0
+                var e = e0
+
+                // apply fine tune offsets if we can find them
+                if let hwID, let fineTunesDict {
+                    if let tuneAny = fineTunesDict.value(forKeyAny: hwID) {
+                        let m = Mirror(reflecting: tuneAny)
+                        let ds = (m.child(namedAnyOf: ["startOffset", "deltaStart", "startDelta"]) as? Double) ?? 0
+                        let de = (m.child(namedAnyOf: ["endOffset", "deltaEnd", "endDelta"]) as? Double) ?? 0
+                        s += ds
+                        e += de
+                    }
+                }
+
+                // clamp to sentence bounds if available
+                if let b = sentenceBounds[sentenceID] {
+                    s = max(b.0, min(s, b.1))
+                    e = max(b.0, min(e, b.1))
+                    if e <= s { e = min(b.1, s + 0.03) }
+                } else {
+                    if e <= s { e = s + 0.03 }
+                }
+
+                out.append(.init(sentenceID: sentenceID, start: s, end: e))
+            }
+        }
+
+        out.sort { $0.start < $1.start }
+        return out
+    }
+}
+
+// MARK: - Reflection helpers (no dependencies on your model types)
+
+private typealias AnyDictionary = _AnyDictionaryWrapper
+
+private struct _AnyDictionaryWrapper {
+    let pairs: [(Any, Any)]
+    private let getter: (Any) -> Any?
+
+    init?(_ any: Any) {
+        let mirror = Mirror(reflecting: any)
+
+        // Swift Dictionary reflection is not guaranteed stable, so we support two forms:
+        // 1) actual Dictionary<K,V> cast handled outside
+        // 2) mirror children where each element has key/value
+        if mirror.displayStyle == .dictionary {
+            var tmp: [(Any, Any)] = []
+            for child in mirror.children {
+                let tuple = Mirror(reflecting: child.value)
+                let key = tuple.child(named: "key")
+                let value = tuple.child(named: "value")
+                if let key, let value {
+                    tmp.append((key, value))
+                }
+            }
+            self.pairs = tmp
+            self.getter = { _ in nil }
+            return
+        }
+        return nil
+    }
+
+    func value(forKeyAny key: Any) -> Any? {
+        // best-effort: linear scan
+        for (k, v) in pairs {
+            if "\(k)" == "\(key)" { return v }
+        }
+        return nil
+    }
+}
+
+private extension TranscriptViewModel {
+    func reflectValue(namedAnyOf names: [String]) -> Any? {
+        let m = Mirror(reflecting: self)
+        for n in names {
+            if let v = m.child(named: n) { return v }
+        }
+        return nil
+    }
+}
+
+private extension Mirror {
+    func child(named name: String) -> Any? {
+        children.first(where: { $0.label == name })?.value
+    }
+
+    func child(namedAnyOf names: [String]) -> Any? {
+        for n in names {
+            if let v = child(named: n) { return v }
+        }
+        return nil
     }
 }

@@ -15,64 +15,66 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
     @Published private(set) var isPartialPlaying: Bool = false
     @Published private(set) var partialIndex: Int = 0
     @Published private(set) var partialTotal: Int = 0
-
     @Published private(set) var currentSentenceID: String? = nil
 
-    // ✅ NEW: pause support (works for partial)
     @Published private(set) var isPaused: Bool = false
-
     @Published var errorMessage: String? = nil
 
-    private var player: AVAudioPlayer?
-    private var loadedURL: URL?
+    /// NEW: generic timed segment for word-shadowing playback
+    struct TimedSegment: Identifiable, Hashable {
+        let id: String
+        let sentenceID: String?
+        let start: Double
+        let end: Double
 
-    private var partialTask: Task<Void, Never>?
-    private var singleSegmentTask: Task<Void, Never>?
+        init(sentenceID: String?, start: Double, end: Double) {
+            self.sentenceID = sentenceID
+            self.start = start
+            self.end = end
+            let s = Int((start * 1000).rounded())
+            let e = Int((end * 1000).rounded())
+            self.id = "\(sentenceID ?? "nil")|\(s)_\(e)"
+        }
 
-    private let headPad: Double = 0.02
-    private let tailPad: Double = 0.12
+        var duration: Double { max(0, end - start) }
+    }
 
-    enum PartialPlaybackMode: Equatable {
+    enum PartialPlaybackMode: Hashable {
         case beepBetweenCuts
         case repeatPractice(repeats: Int, silenceMultiplier: Double, sentencesPauseOnly: Bool)
     }
 
+    private var player: AVAudioPlayer?
+    private var partialTask: Task<Void, Never>?
+    private var singleSegmentTask: Task<Void, Never>?
+
+    // Sentence/subchunk padding (existing)
+    private let headPad: Double = 0.02
+    private let tailPad: Double = 0.12
+
+    // Word precision padding (NEW)
+    private let wordHeadPad: Double = 0.00
+    private let wordTailPad: Double = 0.02
+
     // MARK: - Loading
 
     func loadIfNeeded(url: URL) {
-        if loadedURL == url, player != nil { return }
-        do { try load(url: url) } catch { errorMessage = error.localizedDescription }
-    }
+        if isLoaded { return }
+        do {
+            let p = try AVAudioPlayer(contentsOf: url)
+            p.delegate = self
+            p.prepareToPlay()
+            player = p
 
-    private func load(url: URL) throws {
-        errorMessage = nil
-
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            isLoaded = false
+            isLoaded = true
             isPlaying = false
             isPaused = false
-            player = nil
-            loadedURL = nil
-            errorMessage = "Stored audio file not found:\n\(url.lastPathComponent)"
-            return
+
+            applyLoopCount()
+        } catch {
+            errorMessage = "Failed to load audio: \(error.localizedDescription)"
+            isLoaded = false
         }
-
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-        try? AVAudioSession.sharedInstance().setActive(true)
-        #endif
-
-        let p = try AVAudioPlayer(contentsOf: url)
-        p.delegate = self
-        p.prepareToPlay()
-
-        player = p
-        loadedURL = url
-        isLoaded = true
-        isPlaying = false
-        isPaused = false
-
-        applyLoopCount()
     }
 
     private func applyLoopCount() {
@@ -87,7 +89,38 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         applyLoopCount()
     }
 
-    // MARK: - Pause / Resume
+    // MARK: - Basic play/pause/stop
+
+    func togglePlay(url: URL) {
+        cancelSingleSegment()
+        stopPartialPlayback()
+        clearPauseState()
+
+        loadIfNeeded(url: url)
+        guard let p = player, isLoaded else { return }
+
+        if p.isPlaying {
+            p.pause()
+            isPlaying = false
+            isPaused = true
+        } else {
+            p.play()
+            isPlaying = true
+            isPaused = false
+        }
+    }
+
+    func stop() {
+        cancelSingleSegment()
+        stopPartialPlayback()
+
+        player?.stop()
+        player?.currentTime = 0
+
+        isPlaying = false
+        isPaused = false
+        currentSentenceID = nil
+    }
 
     /// ✅ Pauses or resumes current playback (full or partial).
     /// Works during partial-play segment loops and silence waits.
@@ -99,12 +132,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             player?.pause()
             isPlaying = false
         } else {
-            // Resume only if something is actually supposed to be playing
-            if isPartialPlaying {
+            // Resume only if we are in a playing context
+            // (partial loop will restart the player as needed)
+            if isPartialPlaying == false {
                 player?.play()
-                isPlaying = true
-            } else if let p = player, p.currentTime > 0, p.currentTime < p.duration {
-                p.play()
                 isPlaying = true
             }
         }
@@ -114,45 +145,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         isPaused = false
     }
 
-    // MARK: - Full file play
-
-    func togglePlay(url: URL) {
-        stopPartialPlayback()
-        cancelSingleSegment()
-        currentSentenceID = nil
-        clearPauseState()
-
-        loadIfNeeded(url: url)
-        guard let p = player, isLoaded else { return }
-
-        if p.isPlaying {
-            p.pause()
-            isPlaying = false
-        } else {
-            applyLoopCount()
-            p.play()
-            isPlaying = true
-        }
-    }
-
-    func stop() {
-        stopPartialPlayback()
-        cancelSingleSegment()
-        currentSentenceID = nil
-        clearPauseState()
-
-        guard let p = player else { return }
-        p.stop()
-        p.currentTime = 0
-        isPlaying = false
-    }
-
-    // MARK: - Single segment
-
-    private func cancelSingleSegment() {
-        singleSegmentTask?.cancel()
-        singleSegmentTask = nil
-    }
+    // MARK: - Single segment (used by edit sheets)
 
     func playSegmentOnce(url: URL, start: Double, end: Double, sentenceID: String? = nil) {
         stopPartialPlayback()
@@ -162,7 +155,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
 
-        let seg = adjustedSegment(start: start, end: end, playerDuration: p.duration)
+        let seg = adjustedSegment(start: start, end: end, playerDuration: p.duration, head: headPad, tail: tailPad)
         guard seg.duration > 0.03 else { return }
 
         currentSentenceID = sentenceID
@@ -170,14 +163,15 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         singleSegmentTask = Task { [weak self] in
             guard let self else { return }
             _ = await self.playSegment(start: seg.start, end: seg.end, with: url)
-            await MainActor.run {
-                self.isPlaying = false
-                self.currentSentenceID = nil
-            }
         }
     }
 
-    // MARK: - Partial playback
+    private func cancelSingleSegment() {
+        singleSegmentTask?.cancel()
+        singleSegmentTask = nil
+    }
+
+    // MARK: - Existing sentence/subchunk partial play
 
     func togglePartialPlay(
         url: URL,
@@ -227,9 +221,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         isPartialPlaying = true
         partialIndex = 0
         partialTotal = chunks.count
-        errorMessage = nil
 
-        partialTask?.cancel()
         partialTask = Task { [weak self] in
             guard let self else { return }
 
@@ -256,81 +248,166 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     self.currentSentenceID = chunk.id
                 }
 
-                // Decide split points
+                // split points
                 let points: [Double]
                 if sentencesOnly, case .repeatPractice = mode {
                     points = [chunk.start, chunk.end]
                 } else {
-                    let eps = 0.03
-                    let cuts = (manualCutsBySentence[chunk.id] ?? [])
-                        .filter { $0 > (chunk.start + eps) && $0 < (chunk.end - eps) }
-                        .sorted()
-                    var pts: [Double] = [chunk.start]
-                    pts.append(contentsOf: cuts)
-                    pts.append(chunk.end)
-                    points = pts
+                    // Build points from manual cuts + fine tune (existing behavior)
+                    let cuts = (manualCutsBySentence[chunk.id] ?? []).sorted()
+                    var arr = [chunk.start]
+                    arr.append(contentsOf: cuts.filter { $0 > chunk.start && $0 < chunk.end })
+                    arr.append(chunk.end)
+                    points = arr
                 }
 
-                for j in 0..<(points.count - 1) {
+                // Play each part with repeats
+                for partIndex in 0..<(points.count - 1) {
                     if Task.isCancelled { break }
 
-                    let baseStart = points[j]
-                    let baseEnd = points[j + 1]
-                    let subID = SentenceSubchunkBuilder.subchunkID(sentenceID: chunk.id, start: baseStart, end: baseEnd)
-                    let tune = fineTunesBySubchunk[subID] ?? SegmentFineTune()
+                    let rawStart = points[partIndex]
+                    let rawEnd = points[partIndex + 1]
 
-                    var s = baseStart + tune.startOffset
-                    var e = baseEnd + tune.endOffset
-                    s = max(chunk.start, min(s, chunk.end))
-                    e = max(chunk.start, min(e, chunk.end))
-                    if e <= s { e = min(chunk.end, s + 0.05) }
+                    // Apply fine-tune if we can map an id (existing code uses SentenceSubchunkBuilder ids;
+                    // here we just play raw segments if sentencesOnly)
+                    var start = rawStart
+                    var end = rawEnd
 
-                    let isLastSentence = (idx == chunks.count - 1)
-                    let isLastPieceInSentence = (j == points.count - 2)
-                    let isLastOverall = isLastSentence && isLastPieceInSentence
+                    // Repeats loop
+                    for rep in 0..<practiceRepeats {
+                        if Task.isCancelled { break }
 
-                    switch mode {
-                    case .beepBetweenCuts:
-                        let ok = await self.playSegment(start: s, end: e, with: url)
-                        if !ok || Task.isCancelled { break }
+                        let ok = await self.playSegment(start: start, end: end, with: url)
+                        if !ok { break }
 
-                        if !isLastOverall {
-                            await self.beep()
-                            _ = await self.sleepWithPause(seconds: 0.12)
+                        if rep < (practiceRepeats - 1) {
+                            // silence gap proportional to segment duration
+                            let segDur = max(0.05, end - start)
+                            _ = await self.sleepWithPause(seconds: segDur * practiceMult)
                         }
+                    }
 
-                    case .repeatPractice:
-                        let pieceDuration = max(0.03, e - s)
-                        let silenceSeconds = max(0.05, (2.0 * pieceDuration) * practiceMult)
+                    if Task.isCancelled { break }
 
-                        for _ in 0..<practiceRepeats {
-                            if Task.isCancelled { break }
-                            let ok = await self.playSegment(start: s, end: e, with: url)
-                            if !ok || Task.isCancelled { break }
-                            let okSleep = await self.sleepWithPause(seconds: silenceSeconds)
-                            if !okSleep || Task.isCancelled { break }
-                        }
-
-                        if !Task.isCancelled, !isLastOverall {
+                    if case .beepBetweenCuts = mode {
+                        await self.beep()
+                        _ = await self.sleepWithPause(seconds: 0.12)
+                    } else {
+                        // if sentencesPauseOnly: no beep between parts
+                        if !(sentencesOnly) {
                             await self.beep()
                             _ = await self.sleepWithPause(seconds: 0.12)
                         }
                     }
                 }
 
-                if Task.isCancelled { break }
+                // sentence boundary pause
+                if case .repeatPractice = mode {
+                    await self.beep()
+                    _ = await self.sleepWithPause(seconds: 0.12)
+                }
             }
 
             await MainActor.run {
                 self.isPartialPlaying = false
                 self.partialIndex = 0
                 self.partialTotal = 0
-                self.isPlaying = false
-                self.currentSentenceID = nil
-                self.isPaused = false
             }
         }
     }
+
+    // MARK: - ✅ NEW: Word-shadowing partial play (explicit segments)
+
+    func togglePartialPlayWordSegments(
+        url: URL,
+        segments: [TimedSegment],
+        repeats: Int,
+        silenceMultiplier: Double
+    ) {
+        cancelSingleSegment()
+        currentSentenceID = nil
+
+        if isPartialPlaying {
+            stopPartialPlayback()
+            stop()
+            return
+        }
+
+        startWordSegmentsPlayback(
+            url: url,
+            segments: segments,
+            repeats: repeats,
+            silenceMultiplier: silenceMultiplier
+        )
+    }
+
+    private func startWordSegmentsPlayback(
+        url: URL,
+        segments: [TimedSegment],
+        repeats: Int,
+        silenceMultiplier: Double
+    ) {
+        stop()
+
+        loadIfNeeded(url: url)
+        guard let p = player, isLoaded else { return }
+
+        let segs = segments.sorted { $0.start < $1.start }
+        guard !segs.isEmpty else {
+            errorMessage = "No word segments found."
+            return
+        }
+
+        clearPauseState()
+
+        p.numberOfLoops = 0
+        isPartialPlaying = true
+        partialIndex = 0
+        partialTotal = segs.count
+
+        let r = min(max(repeats, 1), 5)
+        let mult = min(max(silenceMultiplier, 0.2), 6.0)
+
+        partialTask = Task { [weak self] in
+            guard let self else { return }
+
+            outer: for _ in 0..<max(1, loopCount) {
+                for (idx, seg) in segs.enumerated() {
+                    if Task.isCancelled { break outer }
+
+                    await MainActor.run {
+                        self.partialIndex = idx + 1
+                        self.currentSentenceID = seg.sentenceID
+                    }
+
+                    // repeats
+                    for rep in 0..<r {
+                        if Task.isCancelled { break outer }
+
+                        let ok = await self.playWordSegment(start: seg.start, end: seg.end, with: url)
+                        if !ok { break outer }
+
+                        if rep < (r - 1) {
+                            let dur = max(0.03, seg.duration)
+                            _ = await self.sleepWithPause(seconds: dur * mult)
+                        }
+                    }
+
+                    if Task.isCancelled { break outer }
+                    await self.beep()
+                    _ = await self.sleepWithPause(seconds: 0.12)
+                }
+            }
+
+            await MainActor.run {
+                self.isPartialPlaying = false
+                self.partialIndex = 0
+                self.partialTotal = 0
+            }
+        }
+    }
+
+    // MARK: - Stop partial
 
     private func stopPartialPlayback() {
         partialTask?.cancel()
@@ -362,9 +439,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             if isPaused {
                 let ok = await waitWhilePaused()
                 if !ok { return false }
-                continue
             }
-            let step = min(0.05, remaining) // 50ms
+            let step = min(remaining, 0.05)
             do {
                 try await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
             } catch {
@@ -381,7 +457,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return false }
 
-        let adj = adjustedSegment(start: start, end: end, playerDuration: p.duration)
+        let adj = adjustedSegment(start: start, end: end, playerDuration: p.duration, head: headPad, tail: tailPad)
         if adj.duration < 0.03 { return true }
 
         p.stop()
@@ -424,14 +500,65 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
 
         p.pause()
-        p.currentTime = targetEnd
         isPlaying = false
-        return true
+        return !Task.isCancelled
     }
 
-    private func adjustedSegment(start: Double, end: Double, playerDuration: Double) -> (start: Double, end: Double, duration: Double) {
-        let s = max(0, start - headPad)
-        let e = min(playerDuration, max(s, end + tailPad))
+    /// Word-precision variant (smaller padding)
+    private func playWordSegment(start: Double, end: Double, with url: URL) async -> Bool {
+        loadIfNeeded(url: url)
+        guard let p = player, isLoaded else { return false }
+
+        let adj = adjustedSegment(start: start, end: end, playerDuration: p.duration, head: wordHeadPad, tail: wordTailPad)
+        if adj.duration < 0.02 { return true }
+
+        p.stop()
+        p.currentTime = adj.start
+        p.numberOfLoops = 0
+
+        p.play()
+        isPlaying = true
+
+        let targetEnd = adj.end
+        while p.currentTime < targetEnd {
+            if Task.isCancelled {
+                p.stop()
+                isPlaying = false
+                return false
+            }
+
+            if isPaused {
+                p.pause()
+                isPlaying = false
+
+                let ok = await waitWhilePaused()
+                if !ok {
+                    p.stop()
+                    isPlaying = false
+                    return false
+                }
+
+                p.play()
+                isPlaying = true
+            }
+
+            do {
+                try await Task.sleep(nanoseconds: 15_000_000) // 15ms
+            } catch {
+                p.stop()
+                isPlaying = false
+                return false
+            }
+        }
+
+        p.pause()
+        isPlaying = false
+        return !Task.isCancelled
+    }
+
+    private func adjustedSegment(start: Double, end: Double, playerDuration: Double, head: Double, tail: Double) -> (start: Double, end: Double, duration: Double) {
+        let s = max(0, start - head)
+        let e = min(playerDuration, max(s, end + tail))
         return (s, e, max(0, e - s))
     }
 
