@@ -37,68 +37,101 @@ struct SentenceEditSheet: View {
                 ScrollView {
                     VStack(spacing: 14) {
 
-                        Button {
-                            playback.playSegmentOnce(
-                                url: audioURL,
-                                start: chunk.start,
-                                end: chunk.end,
-                                sentenceID: chunk.id
+                        // MAIN CARD: Play/Stop + editor + Save/Edit
+                        VStack(spacing: 12) {
+
+                            // ✅ Play + Stop row
+                            HStack(spacing: 12) {
+                                Button {
+                                    playback.playSegmentOnce(
+                                        url: audioURL,
+                                        start: chunk.start,
+                                        end: chunk.end,
+                                        sentenceID: chunk.id
+                                    )
+                                } label: {
+                                    Label(playback.isPlaying ? "Playing…" : "Play sentence", systemImage: "play.fill")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!FileManager.default.fileExists(atPath: audioURL.path))
+
+                                Button {
+                                    playback.stop()
+                                } label: {
+                                    Label("Stop", systemImage: "stop.fill")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(!playback.isPlaying && !playback.isPartialPlaying)
+                            }
+
+                            Text("Tap to edit manual pauses")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+
+                            let editorMax = geo.size.height * 0.35
+                            AutoSizingStyledCursorTextView(
+                                text: $draftText,
+                                selectedRange: $selectedRange,
+                                isFocused: $isFocused,
+                                isEditable: isEditable,
+                                resignFocusToken: $resignToken,
+                                measuredHeight: $editorHeight
                             )
-                        } label: {
-                            Label(playback.isPlaying ? "Playing…" : "Play sentence", systemImage: "play.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!FileManager.default.fileExists(atPath: audioURL.path))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: min(max(editorHeight, 60), min(editorMax, 260)))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                            )
 
-                        let editorMax = geo.size.height * 0.35
-                        AutoSizingStyledCursorTextView(
-                            text: $draftText,
-                            selectedRange: $selectedRange,
-                            isFocused: $isFocused,
-                            isEditable: isEditable,
-                            resignFocusToken: $resignToken,
-                            measuredHeight: $editorHeight
-                        )
-                        .frame(maxWidth: .infinity)
-                        .frame(height: min(max(editorHeight, 60), min(editorMax, 260)))
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            HStack(spacing: 12) {
+                                Button {
+                                    savePauses()
+                                } label: {
+                                    Label("Save", systemImage: "checkmark.circle.fill")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(!isEditable)
+
+                                Button {
+                                    isEditable = true
+                                } label: {
+                                    Label("Edit", systemImage: "pencil")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isEditable)
+                            }
+                        }
+                        .padding(12)
+                        .background(.thinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.black.opacity(0.18), lineWidth: 1)
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(.quaternary, lineWidth: 1)
                         )
 
-                        HStack(spacing: 12) {
-                            Button {
-                                savePauses()
-                            } label: {
-                                Label("Save", systemImage: "checkmark.circle.fill")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(!isEditable)
-
-                            Button {
-                                isEditable = true
-                            } label: {
-                                Label("Edit", systemImage: "pencil")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            .disabled(isEditable)
-                        }
-
+                        // Sentence parts: only each part has wrapper (no full section wrapper)
                         if !subchunks.isEmpty {
-                            VStack(alignment: .leading, spacing: 14) {
+                            VStack(alignment: .center, spacing: 12) {
                                 Text("Sentence parts")
                                     .font(.headline)
-                                    .padding(.top, 4)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .padding(.top, 2)
 
-                                ForEach(subchunks, id: \.id) { sc in
-                                    partBubble(for: sc)
+                                VStack(spacing: 12) {
+                                    ForEach(subchunks, id: \.id) { sc in
+                                        partCard(for: sc)
+                                    }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .center)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .center)
                         } else {
                             Text("No saved pauses in this sentence.")
                                 .font(.footnote)
@@ -128,7 +161,11 @@ struct SentenceEditSheet: View {
 
                 let savedText = transcriptVM.displayText(for: chunk)
                 let savedCuts = (transcriptVM.manualCutsBySentence[chunk.id] ?? []).sorted()
-                subchunks = SentenceSubchunkBuilder.build(sentence: chunk, editedText: savedText, manualCuts: savedCuts)
+                subchunks = SentenceSubchunkBuilder.build(
+                    sentence: chunk,
+                    editedText: savedText,
+                    manualCuts: savedCuts
+                )
 
                 draftText = savedText
             }
@@ -166,6 +203,22 @@ struct SentenceEditSheet: View {
         selectedRange = NSRange(location: newLoc, length: 0)
     }
 
+    // Each part has its own rounded rectangle wrapper
+    @ViewBuilder
+    private func partCard(for sc: SentenceSubchunk) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            partBubble(for: sc)
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+        .frame(maxWidth: 560, alignment: .center)
+    }
+
     @ViewBuilder
     private func partBubble(for sc: SentenceSubchunk) -> some View {
         let tune = transcriptVM.fineTune(for: sc.id)
@@ -187,7 +240,6 @@ struct SentenceEditSheet: View {
                 .background(Color(.systemGray6))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
-                    // ✅ light gray border
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(Color(.systemGray3), lineWidth: 1)
                 )
@@ -198,7 +250,12 @@ struct SentenceEditSheet: View {
                         get: { tune.startOffset },
                         set: { newVal in
                             guard isUnlocked else { return }
-                            transcriptVM.setFineTune(itemID: itemID, subchunkID: sc.id, startOffset: newVal, endOffset: tune.endOffset)
+                            transcriptVM.setFineTune(
+                                itemID: itemID,
+                                subchunkID: sc.id,
+                                startOffset: newVal,
+                                endOffset: tune.endOffset
+                            )
                         }
                     ),
                     in: -0.5...0.5,
@@ -220,7 +277,12 @@ struct SentenceEditSheet: View {
                         get: { tune.endOffset },
                         set: { newVal in
                             guard isUnlocked else { return }
-                            transcriptVM.setFineTune(itemID: itemID, subchunkID: sc.id, startOffset: tune.startOffset, endOffset: newVal)
+                            transcriptVM.setFineTune(
+                                itemID: itemID,
+                                subchunkID: sc.id,
+                                startOffset: tune.startOffset,
+                                endOffset: newVal
+                            )
                         }
                     ),
                     in: -0.5...0.5,
@@ -234,7 +296,7 @@ struct SentenceEditSheet: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, 2)
     }
 
     private func adjustedTimes(for sc: SentenceSubchunk) -> (start: Double, end: Double) {
