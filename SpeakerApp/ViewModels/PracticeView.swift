@@ -17,7 +17,7 @@ struct PracticeView: View {
     @State private var practiceSilenceMultiplier: Double = 1.0
     @State private var sentencesPauseOnly: Bool = false
 
-    // ✅ NEW: Flagged-only toggle (persisted via PlaybackSettings)
+    // Flagged-only toggle (persisted via PlaybackSettings)
     @State private var flaggedOnly: Bool = false
 
     // Font scale slider for Full Screen Playback (persisted per item)
@@ -38,9 +38,25 @@ struct PracticeView: View {
 
                 ScrollView {
                     VStack(spacing: 18) {
+
+                        // 0) Title
                         headerSection
-                        playbackSection
+
+                        // 1) General play/stop buttons card
+                        fullFilePlayStopCard
+
+                        // 2) Playback font size slider card
+                        playbackFontSizeCard
+
+                        // 3) Shadowing / Flagged Only card
+                        shadowingCard
+
+                        // 4) Partial play, repeat × card
+                        partialPlayCard
+
+                        // 5) Sentences list + flags
                         sentencesSection
+
                         errorSection
                     }
                     .frame(maxWidth: 720)
@@ -124,7 +140,7 @@ struct PracticeView: View {
         .padding(.top, 12)
     }
 
-    // Requirement: show the grid title only (no filename)
+    // 0) Title
     private var headerSection: some View {
         VStack(spacing: 10) {
             Text(item.scriptName)
@@ -134,105 +150,110 @@ struct PracticeView: View {
         }
     }
 
-    private var playbackSection: some View {
-        VStack(spacing: 12) {
-
-            // 1) Playback font size slider
-            VStack(spacing: 8) {
-                HStack {
-                    Text("Playback font size")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Spacer()
-                    Text("\(Int(playbackFontScale * 100))%")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Slider(value: $playbackFontScale, in: 1.0...2.2, step: 0.05)
+    // 1) General play/stop buttons card
+    private var fullFilePlayStopCard: some View {
+        HStack(spacing: 12) {
+            Button { playback.togglePlay(url: storedMP3URL) } label: {
+                Label(
+                    playback.isPlaying ? "Pause" : "Play",
+                    systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
+                )
+                .frame(maxWidth: .infinity)
             }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
+            .buttonStyle(.borderedProminent)
+            .disabled(!FileManager.default.fileExists(atPath: storedMP3URL.path))
 
-            // 2) Repeat practice toggle + uncovered options + ✅ Flagged Only
-            VStack(spacing: 10) {
-                Toggle("Repeat practice", isOn: $isRepeatPracticeEnabled)
-                    .toggleStyle(.switch)
-
-                if isRepeatPracticeEnabled {
-                    VStack(spacing: 10) {
-                        Picker("Repeats", selection: $practiceRepeats) {
-                            Text("1").tag(1)
-                            Text("2").tag(2)
-                            Text("3").tag(3)
-                        }
-                        .pickerStyle(.segmented)
-
-                        VStack(spacing: 6) {
-                            HStack {
-                                Text("Silence multiplier")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text("×\(practiceSilenceMultiplier, specifier: "%.2f")")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Slider(value: $practiceSilenceMultiplier, in: 0.2...3.0, step: 0.05)
-                        }
-
-                        Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
-                            .toggleStyle(.switch)
-                    }
-                    .padding(.top, 6)
-                }
-
-                // ✅ NEW: Flagged Only toggle (placed at bottom of this card, as requested)
-                Toggle("Flagged Only", isOn: $flaggedOnly)
-                    .toggleStyle(.switch)
-                    .padding(.top, 6)
-            }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
-
-            // Full-file Play / Stop
-            HStack(spacing: 12) {
-                Button { playback.togglePlay(url: storedMP3URL) } label: {
-                    Label(
-                        playback.isPlaying ? "Pause" : "Play",
-                        systemImage: playback.isPlaying ? "pause.fill" : "play.fill"
-                    )
+            Button { playback.stop() } label: {
+                Label("Stop", systemImage: "stop.fill")
                     .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!FileManager.default.fileExists(atPath: storedMP3URL.path))
-
-                Button { playback.stop() } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(!playback.isPlaying && !playback.isPartialPlaying)
             }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
+            .buttonStyle(.bordered)
+            .disabled(!playback.isPlaying && !playback.isPartialPlaying)
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
 
-            // 3) Partial play + Repeat × button (loop count)
+    // 2) Playback font size slider card
+    private var playbackFontSizeCard: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Playback font size")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(playbackFontScale * 100))%")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(value: $playbackFontScale, in: 1.0...2.2, step: 0.05)
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
+
+    // 3) Shadowing / Flagged Only card
+    private var shadowingCard: some View {
+        VStack(spacing: 10) {
+            // label changed
+            Toggle("Shadowing", isOn: $isRepeatPracticeEnabled)
+                .toggleStyle(.switch)
+
+            if isRepeatPracticeEnabled {
+                VStack(spacing: 10) {
+                    Picker("Repeats", selection: $practiceRepeats) {
+                        Text("1").tag(1)
+                        Text("2").tag(2)
+                        Text("3").tag(3)
+                    }
+                    .pickerStyle(.segmented)
+
+                    VStack(spacing: 6) {
+                        HStack {
+                            Text("Silence multiplier")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text("×\(practiceSilenceMultiplier, specifier: "%.2f")")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Slider(value: $practiceSilenceMultiplier, in: 0.2...3.0, step: 0.05)
+                    }
+
+                    Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
+                        .toggleStyle(.switch)
+                }
+                .padding(.top, 6)
+            }
+
+            Toggle("Flagged Only", isOn: $flaggedOnly)
+                .toggleStyle(.switch)
+                .padding(.top, 6)
+        }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
+    }
+
+    // 4) Partial play, repeat × card
+    private var partialPlayCard: some View {
+        VStack(spacing: 10) {
             HStack(spacing: 12) {
                 Button {
                     let willStart = !playback.isPartialPlaying
@@ -246,7 +267,6 @@ struct PracticeView: View {
                         )
                         : .beepBetweenCuts
 
-                    // ✅ apply Flagged Only filter when enabled
                     let chunksToPlay: [SentenceChunk] = {
                         if flaggedOnly {
                             return transcriptVM.sentenceChunks.filter { transcriptVM.flaggedSentenceIDs.contains($0.id) }
@@ -255,7 +275,6 @@ struct PracticeView: View {
                         }
                     }()
 
-                    // If flaggedOnly is ON but nothing is flagged, do nothing.
                     guard !chunksToPlay.isEmpty else { return }
 
                     playback.togglePartialPlay(
@@ -266,7 +285,6 @@ struct PracticeView: View {
                         mode: mode
                     )
 
-                    // Full-screen playback is only launched from PracticeView
                     if willStart { showPlaybackScreen = true }
                 } label: {
                     Label(playback.isPartialPlaying ? "Partial Stop" : "Partial Play", systemImage: "scissors")
@@ -290,13 +308,6 @@ struct PracticeView: View {
                 }
                 .buttonStyle(.bordered)
             }
-            .padding(12)
-            .background(.thinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-            )
 
             if transcriptVM.sentenceChunks.isEmpty {
                 Text("No transcript available. Use Edit → Extract Text to enable partial practice.")
@@ -310,9 +321,16 @@ struct PracticeView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .padding(12)
+        .background(.thinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        )
     }
 
-    // ✅ NEW: Sentences list for flagging (no edit popup)
+    // 5) Sentences list for flagging
     private var sentencesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if transcriptVM.sentenceChunks.isEmpty {
