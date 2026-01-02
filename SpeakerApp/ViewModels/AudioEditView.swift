@@ -18,7 +18,7 @@ struct AudioEditView: View {
     @State private var practiceSilenceMultiplier: Double = 1.0
     @State private var sentencesPauseOnly: Bool = false
 
-    // ✅ NEW: font scale slider for Full Screen Playback (persisted per item)
+    // Font scale slider for Full Screen Playback (persisted per item)
     @State private var playbackFontScale: Double = 1.0
 
     @State private var showPlaybackScreen: Bool = false
@@ -38,7 +38,7 @@ struct AudioEditView: View {
                     VStack(spacing: 18) {
                         headerSection
                         playbackSection
-                        transcriptSection
+                        transcriptSection   // ✅ includes re-transcribe controls at bottom
                         errorSection
                     }
                     .frame(maxWidth: 720)
@@ -124,9 +124,8 @@ struct AudioEditView: View {
 
             Rectangle().fill(.clear).frame(width: 44, height: 44)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal)
         .padding(.top, 12)
-        .padding(.bottom, 10)
     }
 
     private var headerSection: some View {
@@ -149,7 +148,7 @@ struct AudioEditView: View {
     private var playbackSection: some View {
         VStack(spacing: 12) {
 
-            // ✅ Font size slider (affects Full Screen Playback)
+            // Font size slider (affects Full Screen Playback)
             VStack(spacing: 8) {
                 HStack {
                     Text("Playback font size")
@@ -235,7 +234,7 @@ struct AudioEditView: View {
                 .buttonStyle(.bordered)
             }
 
-            // Partial Play + file loop
+            // ✅ FIX: Partial Play uses repeat-practice mode when toggle is ON
             HStack(spacing: 12) {
                 Button {
                     let willStart = !playback.isPartialPlaying
@@ -279,9 +278,9 @@ struct AudioEditView: View {
         }
     }
 
-    // transcriptSection unchanged from your latest (outer scroll controls it)
     private var transcriptSection: some View {
         VStack(spacing: 10) {
+            // Transcript list
             VStack(spacing: 10) {
                 if transcriptVM.sentenceChunks.isEmpty {
                     Text(transcriptVM.isTranscribing ? "Transcribing…" : "No transcript yet.")
@@ -325,29 +324,48 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            if !transcriptVM.statusText.isEmpty {
-                Text(transcriptVM.statusText)
-                    .font(.footnote)
+            // ✅ Re-transcribe controls (restored)
+            HStack(spacing: 10) {
+                Text("Language")
+                    .font(.caption)
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
 
-            if let err = transcriptVM.errorMessage {
-                Text(err)
-                    .font(.footnote)
-                    .foregroundStyle(.red)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Spacer()
+
+                Picker("", selection: $transcriptVM.preferredLanguageCode) {
+                    Text("Auto").tag("auto")
+                    Text("EN").tag("en")
+                    Text("ES").tag("es")
+                    Text("FR").tag("fr")
+                    Text("PT").tag("pt")
+                    Text("IT").tag("it")
+                    Text("DE").tag("de")
+                    Text("PL").tag("pl")
+                }
+                .pickerStyle(.menu)
+            }
+            .padding(12)
+            .background(.thinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.quaternary, lineWidth: 1)
+            )
+            .onChange(of: transcriptVM.preferredLanguageCode) { _ in
+                transcriptVM.saveCutPlan(itemID: item.id)
             }
 
             HStack {
                 Button {
-                    Task {
+                    // Use Swift.Task to avoid custom Task symbol collision
+                    _Concurrency.Task {
+                        let force = transcriptVM.hasCachedTranscript
                         await transcriptVM.transcribeFromMP3(
                             itemID: item.id,
                             mp3URL: storedMP3URL,
-                            languageCode: "en",
+                            languageCode: transcriptVM.preferredLanguageCode,
                             model: "base",
-                            force: transcriptVM.hasCachedTranscript
+                            force: force
                         )
                     }
                 } label: {
@@ -367,7 +385,20 @@ struct AudioEditView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .padding(.top, 2)
+
+            if !transcriptVM.statusText.isEmpty {
+                Text(transcriptVM.statusText)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let err = transcriptVM.errorMessage {
+                Text(err)
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(.top, 6)
     }

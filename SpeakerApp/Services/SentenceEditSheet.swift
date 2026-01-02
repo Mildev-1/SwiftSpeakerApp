@@ -11,17 +11,15 @@ struct SentenceEditSheet: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var playback = AudioPlaybackManager()
 
-    // Draft editing (does NOT affect plan until Save)
     @State private var draftText: String
     @State private var selectedRange: NSRange = NSRange(location: 0, length: 0)
     @State private var isFocused: Bool = false
     @State private var isEditable: Bool = true
     @State private var resignToken: Int = 0
 
-    // Bubble segments after Save (or loaded from persisted plan)
-    @State private var subchunks: [SentenceSubchunk] = []
+    @State private var editorHeight: CGFloat = 80
 
-    // Per-bubble lock state (locked by default)
+    @State private var subchunks: [SentenceSubchunk] = []
     @State private var unlocked: Set<String> = []
 
     init(itemID: UUID, chunk: SentenceChunk, audioURL: URL, words: [WordTiming], transcriptVM: TranscriptViewModel) {
@@ -38,7 +36,7 @@ struct SentenceEditSheet: View {
             GeometryReader { geo in
                 ScrollView {
                     VStack(spacing: 14) {
-                        // Sentence Play
+
                         Button {
                             playback.playSegmentOnce(
                                 url: audioURL,
@@ -53,24 +51,23 @@ struct SentenceEditSheet: View {
                         .buttonStyle(.borderedProminent)
                         .disabled(!FileManager.default.fileExists(atPath: audioURL.path))
 
-                        // Draft editor (small)
                         let editorMax = geo.size.height * 0.35
-                        CursorTextView(
+                        AutoSizingStyledCursorTextView(
                             text: $draftText,
                             selectedRange: $selectedRange,
                             isFocused: $isFocused,
                             isEditable: isEditable,
-                            resignFocusToken: $resignToken
+                            resignFocusToken: $resignToken,
+                            measuredHeight: $editorHeight
                         )
-                        .frame(height: min(editorMax, 220)) // ~6 lines cap
-                        .background(.thinMaterial)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: min(max(editorHeight, 60), min(editorMax, 260)))
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(.quaternary, lineWidth: 1)
+                                .stroke(Color.black.opacity(0.18), lineWidth: 1)
                         )
 
-                        // Save / Edit row
                         HStack(spacing: 12) {
                             Button {
                                 savePauses()
@@ -82,7 +79,6 @@ struct SentenceEditSheet: View {
                             .disabled(!isEditable)
 
                             Button {
-                                // re-enable editing
                                 isEditable = true
                             } label: {
                                 Label("Edit", systemImage: "pencil")
@@ -111,6 +107,7 @@ struct SentenceEditSheet: View {
                                 .padding(.top, 6)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(16)
                 }
             }
@@ -122,39 +119,31 @@ struct SentenceEditSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     if isEditable && isFocused {
-                        Button("Pause") { insertPauseEmoji() }
+                        Button("Add Pause") { insertPauseEmoji() }
                     }
                 }
             }
             .onAppear {
                 playback.loadIfNeeded(url: audioURL)
 
-                // Build initial bubbles from persisted plan (if already saved before)
                 let savedText = transcriptVM.displayText(for: chunk)
                 let savedCuts = (transcriptVM.manualCutsBySentence[chunk.id] ?? []).sorted()
                 subchunks = SentenceSubchunkBuilder.build(sentence: chunk, editedText: savedText, manualCuts: savedCuts)
 
-                // Draft starts from persisted text
                 draftText = savedText
             }
         }
     }
 
-    // MARK: Save
-
     private func savePauses() {
-        // Commit draft → plan
         transcriptVM.syncManualCutsForSentence(itemID: itemID, chunk: chunk, finalEditedText: draftText)
 
-        // Stop editing + resign focus
         isEditable = false
         resignToken += 1
 
-        // Refresh bubbles from newly saved plan
         let cuts = (transcriptVM.manualCutsBySentence[chunk.id] ?? []).sorted()
         subchunks = SentenceSubchunkBuilder.build(sentence: chunk, editedText: draftText, manualCuts: cuts)
 
-        // Ensure each new bubble has a fineTune entry (defaults 0,0)
         for sc in subchunks {
             if transcriptVM.fineTunesBySubchunk[sc.id] == nil {
                 transcriptVM.fineTunesBySubchunk[sc.id] = SegmentFineTune()
@@ -162,8 +151,6 @@ struct SentenceEditSheet: View {
         }
         transcriptVM.saveCutPlan(itemID: itemID)
     }
-
-    // MARK: Insert emoji
 
     private func insertPauseEmoji() {
         let pauseEmoji = SentenceCursorTimeMapper.pauseEmoji
@@ -179,15 +166,12 @@ struct SentenceEditSheet: View {
         selectedRange = NSRange(location: newLoc, length: 0)
     }
 
-    // MARK: Bubble UI
-
     @ViewBuilder
     private func partBubble(for sc: SentenceSubchunk) -> some View {
         let tune = transcriptVM.fineTune(for: sc.id)
         let isUnlocked = unlocked.contains(sc.id)
 
         VStack(alignment: .leading, spacing: 10) {
-            // Play part
             Button {
                 let adj = adjustedTimes(for: sc)
                 playback.playSegmentOnce(url: audioURL, start: adj.start, end: adj.end, sentenceID: nil)
@@ -197,18 +181,17 @@ struct SentenceEditSheet: View {
             }
             .buttonStyle(.bordered)
 
-            // Bubble text
             Text(sc.text.isEmpty ? "…" : sc.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(12)
-                .background(.thinMaterial)
+                .background(Color(.systemGray6))
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
+                    // ✅ light gray border
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(.quaternary, lineWidth: 1)
+                        .stroke(Color(.systemGray3), lineWidth: 1)
                 )
 
-            // Sliders row with lock between
             HStack(spacing: 10) {
                 Slider(
                     value: Binding(
@@ -247,7 +230,6 @@ struct SentenceEditSheet: View {
             }
             .opacity(isUnlocked ? 1.0 : 0.65)
 
-            // tiny hint
             Text("Fine tune: start \(fmt(tune.startOffset))s, end \(fmt(tune.endOffset))s")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -260,7 +242,6 @@ struct SentenceEditSheet: View {
         var s = sc.baseStart + tune.startOffset
         var e = sc.baseEnd + tune.endOffset
 
-        // keep inside sentence and valid
         s = max(chunk.start, min(s, chunk.end))
         e = max(chunk.start, min(e, chunk.end))
         if e <= s { e = min(chunk.end, s + 0.05) }

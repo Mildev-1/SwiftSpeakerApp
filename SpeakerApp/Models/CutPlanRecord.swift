@@ -5,8 +5,11 @@ struct CutPlanRecord: Codable, Hashable {
     var manualCutsBySentence: [String: [Double]]
     var fineTunesBySubchunk: [String: SegmentFineTune]
 
-    /// ✅ NEW: persisted per item
+    /// ✅ persisted per item
     var playbackSettings: PlaybackSettings
+
+    /// ✅ NEW: preferred transcription language for this item ("auto", "en", "es", ...)
+    var preferredLanguageCode: String
 
     var updatedAt: Date
 
@@ -18,12 +21,14 @@ struct CutPlanRecord: Codable, Hashable {
         manualCutsBySentence: [String: [Double]] = [:],
         fineTunesBySubchunk: [String: SegmentFineTune] = [:],
         playbackSettings: PlaybackSettings = PlaybackSettings(),
+        preferredLanguageCode: String = "auto",
         updatedAt: Date = Date()
     ) {
         self.sentenceEdits = sentenceEdits
         self.manualCutsBySentence = manualCutsBySentence
         self.fineTunesBySubchunk = fineTunesBySubchunk
         self.playbackSettings = playbackSettings
+        self.preferredLanguageCode = preferredLanguageCode
         self.updatedAt = updatedAt
         self.legacyManualCutTimes = nil
     }
@@ -33,6 +38,7 @@ struct CutPlanRecord: Codable, Hashable {
         case manualCutsBySentence
         case fineTunesBySubchunk
         case playbackSettings
+        case preferredLanguageCode
         case updatedAt
         case manualCutTimes // legacy
     }
@@ -44,6 +50,10 @@ struct CutPlanRecord: Codable, Hashable {
         self.manualCutsBySentence = (try? c.decode([String: [Double]].self, forKey: .manualCutsBySentence)) ?? [:]
         self.fineTunesBySubchunk = (try? c.decode([String: SegmentFineTune].self, forKey: .fineTunesBySubchunk)) ?? [:]
         self.playbackSettings = (try? c.decode(PlaybackSettings.self, forKey: .playbackSettings)) ?? PlaybackSettings()
+
+        // ✅ backward compatible: older JSON won't have this key
+        self.preferredLanguageCode = (try? c.decode(String.self, forKey: .preferredLanguageCode)) ?? "auto"
+
         self.updatedAt = (try? c.decode(Date.self, forKey: .updatedAt)) ?? Date()
 
         self.legacyManualCutTimes = try? c.decode([Double].self, forKey: .manualCutTimes)
@@ -58,6 +68,7 @@ struct CutPlanRecord: Codable, Hashable {
         try c.encode(manualCutsBySentence, forKey: .manualCutsBySentence)
         try c.encode(fineTunesBySubchunk, forKey: .fineTunesBySubchunk)
         try c.encode(playbackSettings, forKey: .playbackSettings)
+        try c.encode(preferredLanguageCode, forKey: .preferredLanguageCode)
         try c.encode(updatedAt, forKey: .updatedAt)
         // do not write legacy field anymore
     }
