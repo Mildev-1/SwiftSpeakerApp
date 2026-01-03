@@ -5,15 +5,13 @@ import Combine
 @MainActor
 final class PracticeStatsManager: ObservableObject {
     @Published private(set) var totalSeconds: Double = 0
+    @Published private(set) var logs: [PracticeSessionLog] = []
 
     private let store = PracticeStatsStore.shared
     private let itemID: UUID
     private let itemTitle: String
 
-    // Prepared metadata waiting for playback to actually start
     private var pending: PendingMetadata?
-
-    // Running session
     private var runningStart: Date?
     private var runningMeta: PendingMetadata?
 
@@ -27,15 +25,16 @@ final class PracticeStatsManager: ObservableObject {
     init(itemID: UUID, itemTitle: String) {
         self.itemID = itemID
         self.itemTitle = itemTitle
-        Task { await refreshTotal() }
+        Task { await refresh() }
     }
 
-    func refreshTotal() async {
+    func refresh() async {
         let total = await store.totalSeconds(for: itemID)
+        let l = await store.logs(for: itemID).sorted { $0.startedAt < $1.startedAt }
         self.totalSeconds = total
+        self.logs = l
     }
 
-    /// Call right BEFORE you trigger playback start (only when starting).
     func prepareNextSession(
         mode: PracticeMode,
         flaggedOnly: Bool,
@@ -50,11 +49,10 @@ final class PracticeStatsManager: ObservableObject {
         )
     }
 
-    /// Call from `.onChange(of: playback.isPartialPlaying)`
     func handlePlaybackRunningChanged(isRunning: Bool) {
         if isRunning {
             guard runningStart == nil else { return }
-            guard let p = pending else { return } // only log sessions started from our button
+            guard let p = pending else { return } // only sessions initiated from our Start button
             pending = nil
             runningStart = Date()
             runningMeta = p
@@ -73,7 +71,7 @@ final class PracticeStatsManager: ObservableObject {
         runningMeta = nil
 
         let dur = max(0.0, Date().timeIntervalSince(start))
-        guard dur >= 0.3 else { return } // ignore accidental taps
+        guard dur >= 0.3 else { return }
 
         let entry = PracticeSessionLog(
             id: UUID(),
@@ -89,18 +87,20 @@ final class PracticeStatsManager: ObservableObject {
 
         Task {
             await store.append(entry)
-            await refreshTotal()
+            await refresh()
         }
     }
 
-    func formattedTotal() -> String {
-        let s = max(0, Int(totalSeconds.rounded()))
+    /// ✅ H:MM:SS
+    func formattedTotalHMS() -> String {
+        Self.formatHMS(totalSeconds)
+    }
+
+    static func formatHMS(_ seconds: Double) -> String {
+        let s = max(0, Int(seconds.rounded()))
         let h = s / 3600
         let m = (s % 3600) / 60
         let sec = s % 60
-
-        if h > 0 { return "\(h)h \(m)m" }
-        if m > 0 { return "\(m)m \(sec)s" }
-        return "\(sec)s"
+        return String(format: "%d:%02d:%02d", h, m, sec)
     }
 }

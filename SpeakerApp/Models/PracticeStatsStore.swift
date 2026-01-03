@@ -30,6 +30,10 @@ actor PracticeStatsStore {
         }
     }
 
+    func logs(for itemID: UUID) -> [PracticeSessionLog] {
+        loadAll().filter { $0.itemID == itemID }
+    }
+
     func append(_ entry: PracticeSessionLog) {
         var all = loadAll()
         all.append(entry)
@@ -37,9 +41,7 @@ actor PracticeStatsStore {
     }
 
     func totalSeconds(for itemID: UUID) -> Double {
-        loadAll()
-            .filter { $0.itemID == itemID }
-            .reduce(0.0) { $0 + $1.durationSeconds }
+        logs(for: itemID).reduce(0.0) { $0 + $1.durationSeconds }
     }
 
     private func saveAll(_ entries: [PracticeSessionLog]) {

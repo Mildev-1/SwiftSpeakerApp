@@ -66,7 +66,7 @@ struct PracticeView: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         titleCard
-                        statsSummaryCard
+                        PracticeStatsCardView(stats: stats)
 
                         Text("Shadowing practice")
                             .font(.caption)
@@ -88,7 +88,7 @@ struct PracticeView: View {
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
             applySavedPlaybackSettings()
-            Task { await stats.refreshTotal() }
+            Task { await stats.refresh() }
         }
         .onDisappear {
             stats.forceStopIfRunning()
@@ -174,23 +174,7 @@ struct PracticeView: View {
         }
     }
 
-    private var statsSummaryCard: some View {
-        card {
-            HStack {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Total practice time")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(stats.formattedTotal())
-                        .font(.title3)
-                        .fontWeight(.semibold)
-                }
-                Spacer()
-                Image(systemName: "clock.fill")
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
+
 
     private var wordsShadowingCard: some View {
         let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
