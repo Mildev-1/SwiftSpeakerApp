@@ -54,9 +54,9 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
     // Word precision padding
     private let wordHeadPad: Double = 0.00
-    private let wordTailPad: Double = 0.00   // ✅ was 0.02 (removes built-in tail bleed)
+    private let wordTailPad: Double = 0.00
 
-    // MARK: - SR helper config
+    // MARK: - Segment config
 
     private struct SegmentPlaybackConfig {
         let head: Double
@@ -65,14 +65,35 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         let pollInterval: Double
         /// if true, sleep min(remaining, pollInterval) to reduce overshoot near end
         let useRemainingBasedPolling: Bool
+        let label: String
     }
 
     private var sentenceConfig: SegmentPlaybackConfig {
-        .init(head: headPad, tail: tailPad, minDuration: 0.03, pollInterval: 0.020, useRemainingBasedPolling: false)
+        .init(head: headPad, tail: tailPad, minDuration: 0.03, pollInterval: 0.020, useRemainingBasedPolling: false, label: "SENTENCE")
     }
 
     private var wordConfig: SegmentPlaybackConfig {
-        .init(head: wordHeadPad, tail: wordTailPad, minDuration: 0.02, pollInterval: 0.005, useRemainingBasedPolling: true)
+        .init(head: wordHeadPad, tail: wordTailPad, minDuration: 0.02, pollInterval: 0.005, useRemainingBasedPolling: true, label: "WORD")
+    }
+
+    // MARK: - Debug logging (no behavior change)
+
+    private enum LogLevel { case off, summary, verbose }
+
+    #if DEBUG
+    private let logLevel: LogLevel = .summary
+    #else
+    private let logLevel: LogLevel = .off
+    #endif
+
+    private func t(_ v: Double) -> String { String(format: "%.3f", v) }
+    private func ms(_ v: Double) -> String { String(format: "%.1fms", v * 1000.0) }
+
+    private func log(_ level: LogLevel = .summary, _ msg: @autoclosure () -> String) {
+        guard logLevel != .off else { return }
+        if logLevel == .summary && level == .verbose { return }
+        let ts = String(format: "%.3f", CFAbsoluteTimeGetCurrent())
+        print("🎧[\(ts)] \(msg())")
     }
 
     // MARK: - Loading
@@ -90,9 +111,12 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             isPaused = false
 
             applyLoopCount()
+
+            log(.summary, "LOAD ok duration=\(t(p.duration))s loops=\(loopCount)")
         } catch {
             errorMessage = "Failed to load audio: \(error.localizedDescription)"
             isLoaded = false
+            log(.summary, "LOAD failed \(error.localizedDescription)")
         }
     }
 
@@ -122,10 +146,12 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             p.pause()
             isPlaying = false
             isPaused = true
+            log(.summary, "TOGGLE play -> pause at=\(t(p.currentTime))s")
         } else {
             p.play()
             isPlaying = true
             isPaused = false
+            log(.summary, "TOGGLE pause -> play at=\(t(p.currentTime))s")
         }
     }
 
@@ -139,10 +165,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         isPlaying = false
         isPaused = false
         currentSentenceID = nil
+
+        log(.summary, "STOP")
     }
 
-    /// Pauses or resumes current playback (full or partial).
-    /// Works during partial-play segment loops and silence waits.
     func togglePause() {
         guard isPlaying || isPartialPlaying || isPaused else { return }
         isPaused.toggle()
@@ -150,13 +176,13 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         if isPaused {
             player?.pause()
             isPlaying = false
+            log(.summary, "PAUSE requested")
         } else {
-            // Resume only if we are in a playing context
-            // (partial loop will restart the player as needed)
             if isPartialPlaying == false {
                 player?.play()
                 isPlaying = true
             }
+            log(.summary, "RESUME requested")
         }
     }
 
@@ -166,7 +192,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
     // MARK: - Single segment (used by edit sheets)
 
-    func playSegmentOnce(url: URL, start: Double, end: Double, sentenceID: String? = nil) {
+    /// Added `traceTag` (default) ONLY for logging.
+    func playSegmentOnce(
+        url: URL,
+        start: Double,
+        end: Double,
+        sentenceID: String? = nil,
+        traceTag: String = "EDIT"
+    ) {
         stopPartialPlayback()
         cancelSingleSegment()
         clearPauseState()
@@ -174,14 +207,29 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
 
+        // NOTE: This is your current behavior: adjust here (with sentence pads) THEN playSegmentInternal
+        // which adjusts again (same config). We are NOT changing it, only logging it.
         let seg = adjustedSegment(start: start, end: end, playerDuration: p.duration, head: headPad, tail: tailPad)
-        guard seg.duration > 0.03 else { return }
+        guard seg.duration > 0.03 else {
+            log(.summary, "\(traceTag) playSegmentOnce SKIP tiny raw=[\(t(start)),\(t(end))] adj1=[\(t(seg.start)),\(t(seg.end))] dur=\(ms(seg.duration))")
+            return
+        }
 
         currentSentenceID = sentenceID
 
+        log(.summary,
+            "\(traceTag) playSegmentOnce raw=[\(t(start)),\(t(end))] adj1=[\(t(seg.start)),\(t(seg.end))] dur=\(ms(seg.duration)) head=\(ms(headPad)) tail=\(ms(tailPad))"
+        )
+
         singleSegmentTask = Task { [weak self] in
             guard let self else { return }
-            _ = await self.playSegmentInternal(start: seg.start, end: seg.end, with: url, config: self.sentenceConfig)
+            _ = await self.playSegmentInternal(
+                start: seg.start,
+                end: seg.end,
+                with: url,
+                config: self.sentenceConfig,
+                traceTag: traceTag
+            )
         }
     }
 
@@ -224,10 +272,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         fineTunesBySubchunk: [String: SegmentFineTune],
         mode: PartialPlaybackMode
     ) {
-        stop() // also clears pause state
+        stop()
 
         loadIfNeeded(url: url)
-        guard let p = player, isLoaded else { return }
+        guard let _ = player, isLoaded else { return }
 
         guard !chunks.isEmpty else {
             errorMessage = "No sentence chunks found. (Transcribe first.)"
@@ -236,7 +284,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
         clearPauseState()
 
-        p.numberOfLoops = 0
+        player?.numberOfLoops = 0
         isPartialPlaying = true
         partialIndex = 0
         partialTotal = chunks.count
@@ -262,6 +310,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 isRepeatPracticeMode = true
             }
 
+            log(.summary, "PRACTICE_SENT start chunks=\(chunks.count) reps=\(practiceRepeats) mult=\(practiceMult) sentencesOnly=\(sentencesOnly)")
+
             for (idx, chunk) in chunks.enumerated() {
                 if Task.isCancelled { break }
 
@@ -270,12 +320,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     self.currentSentenceID = chunk.id
                 }
 
-                // split points
                 let points: [Double]
                 if sentencesOnly, case .repeatPractice = mode {
                     points = [chunk.start, chunk.end]
                 } else {
-                    // Build points from manual cuts + fine tune (existing behavior)
                     let cuts = (manualCutsBySentence[chunk.id] ?? []).sorted()
                     var arr = [chunk.start]
                     arr.append(contentsOf: cuts.filter { $0 > chunk.start && $0 < chunk.end })
@@ -283,27 +331,29 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     points = arr
                 }
 
-                // Play each part with repeats
                 for partIndex in 0..<(points.count - 1) {
                     if Task.isCancelled { break }
 
-                    let rawStart = points[partIndex]
-                    let rawEnd = points[partIndex + 1]
+                    let start = points[partIndex]
+                    let end = points[partIndex + 1]
 
-                    // (kept as-is; existing code path doesn’t re-map fineTune ids here)
-                    let start = rawStart
-                    let end = rawEnd
-
-                    // Repeats loop
-                    for _ in 0..<practiceRepeats {
+                    for rep in 0..<practiceRepeats {
                         if Task.isCancelled { break }
 
-                        let ok = await self.playSegmentInternal(start: start, end: end, with: url, config: self.sentenceConfig)
+                        log(.verbose, "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(start)),\(t(end))]")
+
+                        let ok = await self.playSegmentInternal(
+                            start: start,
+                            end: end,
+                            with: url,
+                            config: self.sentenceConfig,
+                            traceTag: "PRACTICE_SENT"
+                        )
                         if !ok { break }
 
-                        // ✅ Fix #3: always include silence after the last repetition too (repeatPractice mode only)
                         if isRepeatPracticeMode {
                             let segDur = max(0.05, end - start)
+                            log(.verbose, "PRACTICE_SENT silence=\(t(segDur * practiceMult))s")
                             _ = await self.sleepWithPause(seconds: segDur * practiceMult)
                         }
                     }
@@ -314,7 +364,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                         await self.beep()
                         _ = await self.sleepWithPause(seconds: 0.12)
                     } else {
-                        // if sentencesPauseOnly: no beep between parts
                         if !(sentencesOnly) {
                             await self.beep()
                             _ = await self.sleepWithPause(seconds: 0.12)
@@ -322,7 +371,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     }
                 }
 
-                // sentence boundary pause
                 if case .repeatPractice = mode {
                     await self.beep()
                     _ = await self.sleepWithPause(seconds: 0.12)
@@ -334,6 +382,8 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 self.partialIndex = 0
                 self.partialTotal = 0
             }
+
+            log(.summary, "PRACTICE_SENT done")
         }
     }
 
@@ -371,7 +421,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         stop()
 
         loadIfNeeded(url: url)
-        guard let p = player, isLoaded else { return }
+        guard let _ = player, isLoaded else { return }
 
         let segs = segments.sorted { $0.start < $1.start }
         guard !segs.isEmpty else {
@@ -381,7 +431,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
         clearPauseState()
 
-        p.numberOfLoops = 0
+        player?.numberOfLoops = 0
         isPartialPlaying = true
         partialIndex = 0
         partialTotal = segs.count
@@ -389,10 +439,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         let r = min(max(repeats, 1), 5)
         let mult = min(max(silenceMultiplier, 0.2), 15.0)
 
+        log(.summary, "PRACTICE_WORD start segs=\(segs.count) reps=\(r) mult=\(mult)")
+
         partialTask = Task { [weak self] in
             guard let self else { return }
 
-            outer: for _ in 0..<max(1, loopCount) {
+            outer: for loop in 0..<max(1, loopCount) {
+                self.log(.summary, "PRACTICE_WORD loop \(loop+1)/\(max(1, self.loopCount))")
+
                 for (idx, seg) in segs.enumerated() {
                     if Task.isCancelled { break outer }
 
@@ -401,26 +455,30 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                         self.currentSentenceID = seg.sentenceID
                     }
 
-                    // repeats
-                    for _ in 0..<r {
+                    self.log(.summary, "PRACTICE_WORD seg \(idx+1)/\(segs.count) id=\(seg.id) raw=[\(self.t(seg.start)),\(self.t(seg.end))] dur=\(self.ms(seg.duration))")
+
+                    for rep in 0..<r {
                         if Task.isCancelled { break outer }
+
+                        self.log(.verbose, "PRACTICE_WORD rep \(rep+1)/\(r) seg=\(seg.id)")
 
                         let ok = await self.playSegmentInternal(
                             start: seg.start,
                             end: seg.end,
                             with: url,
-                            config: self.wordConfig
+                            config: self.wordConfig,
+                            traceTag: "PRACTICE_WORD"
                         )
                         if !ok { break outer }
 
-                        // ✅ Fix: ALWAYS include silence after playback (even after last repetition)
+                        // (kept) always include silence after playback
                         let dur = max(0.03, seg.duration)
+                        self.log(.verbose, "PRACTICE_WORD silence after rep=\(rep+1) sleep=\(self.t(dur * mult))s")
                         _ = await self.sleepWithPause(seconds: dur * mult)
                     }
 
                     if Task.isCancelled { break outer }
 
-                    // keep existing word boundary cue
                     await self.beep()
                     _ = await self.sleepWithPause(seconds: 0.12)
                 }
@@ -431,9 +489,10 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 self.partialIndex = 0
                 self.partialTotal = 0
             }
+
+            self.log(.summary, "PRACTICE_WORD done")
         }
     }
-
 
     // MARK: - Stop partial
 
@@ -452,7 +511,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         while isPaused {
             if Task.isCancelled { return false }
             do {
-                try await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                try await Task.sleep(nanoseconds: 50_000_000)
             } catch {
                 return false
             }
@@ -479,13 +538,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         return !Task.isCancelled
     }
 
-    // MARK: - Core segment playback (single-responsibility: one engine, two configs)
+    // MARK: - Core segment playback (single engine, two configs)
 
     private func playSegmentInternal(
         start: Double,
         end: Double,
         with url: URL,
-        config: SegmentPlaybackConfig
+        config: SegmentPlaybackConfig,
+        traceTag: String
     ) async -> Bool {
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return false }
@@ -498,7 +558,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             tail: config.tail
         )
 
-        if adj.duration < config.minDuration { return true }
+        if adj.duration < config.minDuration {
+            log(.verbose, "\(traceTag) \(config.label) SKIP tiny raw=[\(t(start)),\(t(end))] adj=[\(t(adj.start)),\(t(adj.end))] dur=\(ms(adj.duration))")
+            return true
+        }
+
+        log(.summary,
+            "\(traceTag) \(config.label) PLAY raw=[\(t(start)),\(t(end))] adj=[\(t(adj.start)),\(t(adj.end))] dur=\(ms(adj.duration)) head=\(ms(config.head)) tail=\(ms(config.tail)) poll=\(ms(config.pollInterval)) remPoll=\(config.useRemainingBasedPolling)"
+        )
 
         p.stop()
         p.currentTime = adj.start
@@ -508,10 +575,16 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         isPlaying = true
 
         let targetEnd = adj.end
+        var loops = 0
+        let wallStart = CFAbsoluteTimeGetCurrent()
+
         while p.currentTime < targetEnd {
+            loops += 1
+
             if Task.isCancelled {
                 p.stop()
                 isPlaying = false
+                log(.summary, "\(traceTag) \(config.label) CANCEL at=\(t(p.currentTime)) target=\(t(targetEnd))")
                 return false
             }
 
@@ -523,6 +596,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 if !ok {
                     p.stop()
                     isPlaying = false
+                    log(.summary, "\(traceTag) \(config.label) ABORT during pause at=\(t(p.currentTime))")
                     return false
                 }
 
@@ -530,25 +604,34 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 isPlaying = true
             }
 
-            let sleepSeconds: Double
+            let step: Double
             if config.useRemainingBasedPolling {
                 let remaining = max(0, targetEnd - p.currentTime)
-                sleepSeconds = min(remaining, config.pollInterval) // ✅ reduces overshoot near end
+                step = min(remaining, config.pollInterval)
             } else {
-                sleepSeconds = config.pollInterval // preserves sentence behavior
+                step = config.pollInterval
             }
 
             do {
-                try await Task.sleep(nanoseconds: UInt64(max(0.001, sleepSeconds) * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(step * 1_000_000_000))
             } catch {
                 p.stop()
                 isPlaying = false
+                log(.summary, "\(traceTag) \(config.label) SLEEP_ERR at=\(t(p.currentTime))")
                 return false
             }
         }
 
         p.pause()
         isPlaying = false
+
+        let wall = CFAbsoluteTimeGetCurrent() - wallStart
+        let overshoot = p.currentTime - targetEnd
+
+        log(.summary,
+            "\(traceTag) \(config.label) DONE stopAt=\(t(p.currentTime)) target=\(t(targetEnd)) overshoot=\(ms(overshoot)) loops=\(loops) wall=\(t(wall))s"
+        )
+
         return !Task.isCancelled
     }
 
@@ -576,7 +659,39 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         Task { @MainActor in
             self.isPlaying = false
             self.currentSentenceID = nil
-            // Don't auto-clear partial flags here; partial task controls closing.
         }
     }
+    
+    /// Preview a word segment using the SAME playback policy as Practice word playback.
+    /// No sentence padding, no double-adjustment. This is what you want for hard-word trimming.
+    func playWordSegmentOnce(
+        url: URL,
+        start: Double,
+        end: Double,
+        sentenceID: String? = nil,
+        traceTag: String = "EDIT_WORD_PRECISE"
+    ) {
+        stopPartialPlayback()
+        cancelSingleSegment()
+        clearPauseState()
+
+        loadIfNeeded(url: url)
+        guard isLoaded else { return }
+
+        currentSentenceID = sentenceID
+
+        // IMPORTANT: do NOT pre-adjust here (no head/tail padding).
+        // Let playSegmentInternal apply exactly wordConfig once.
+        singleSegmentTask = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.playSegmentInternal(
+                start: start,
+                end: end,
+                with: url,
+                config: self.wordConfig,
+                traceTag: traceTag
+            )
+        }
+    }
+
 }
