@@ -8,6 +8,7 @@ struct PracticeView: View {
 
     @StateObject private var transcriptVM = TranscriptViewModel()
     @StateObject private var playback = AudioPlaybackManager()
+    @StateObject private var stats: PracticeStatsManager
 
     @State private var showPlaybackScreen: Bool = false
 
@@ -34,6 +35,12 @@ struct PracticeView: View {
     @State private var showWordsDetails: Bool = false
     @State private var showSentenceDetails: Bool = false
 
+    init(item: AudioItem, onClose: @escaping () -> Void) {
+        self.item = item
+        self.onClose = onClose
+        _stats = StateObject(wrappedValue: PracticeStatsManager(itemID: item.id, itemTitle: item.scriptName))
+    }
+
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
     }
@@ -59,6 +66,7 @@ struct PracticeView: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         titleCard
+                        statsSummaryCard
 
                         Text("Shadowing practice")
                             .font(.caption)
@@ -80,6 +88,15 @@ struct PracticeView: View {
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
             applySavedPlaybackSettings()
+            Task { await stats.refreshTotal() }
+        }
+        .onDisappear {
+            stats.forceStopIfRunning()
+        }
+
+        // ✅ Start/stop timer based on actual playback running state
+        .onChange(of: playback.isPartialPlaying) { isRunning in
+            stats.handlePlaybackRunningChanged(isRunning: isRunning)
         }
 
         // Persist settings changes
@@ -109,6 +126,7 @@ struct PracticeView: View {
         HStack(spacing: 10) {
             Button {
                 playback.stop()
+                stats.forceStopIfRunning()
                 onClose()
             } label: {
                 Image(systemName: "chevron.left")
@@ -156,14 +174,30 @@ struct PracticeView: View {
         }
     }
 
-    // ✅ Words: same icon combo as sentences; chevron aligned max-right like Playback display.
+    private var statsSummaryCard: some View {
+        card {
+            HStack {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Total practice time")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Text(stats.formattedTotal())
+                        .font(.title3)
+                        .fontWeight(.semibold)
+                }
+                Spacer()
+                Image(systemName: "clock.fill")
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
     private var wordsShadowingCard: some View {
         let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
         let hasWords = !wordSegs.isEmpty
 
         return card {
             VStack(alignment: .leading, spacing: 12) {
-
                 HStack(spacing: 10) {
                     HStack(spacing: 8) {
                         shadowingIconCombo
@@ -196,7 +230,7 @@ struct PracticeView: View {
                     } label: {
                         Image(systemName: showWordsDetails ? "chevron.up" : "chevron.down")
                             .foregroundStyle(.secondary)
-                            .frame(width: 30, height: 30, alignment: .center) // ✅ consistent right edge
+                            .frame(width: 30, height: 30, alignment: .center)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -234,11 +268,9 @@ struct PracticeView: View {
         }
     }
 
-    // ✅ Sentences: same icon combo as words; chevron aligned max-right like Playback display.
     private var sentenceShadowingCard: some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
-
                 HStack(spacing: 10) {
                     HStack(spacing: 8) {
                         shadowingIconCombo
@@ -269,7 +301,7 @@ struct PracticeView: View {
                     } label: {
                         Image(systemName: showSentenceDetails ? "chevron.up" : "chevron.down")
                             .foregroundStyle(.secondary)
-                            .frame(width: 30, height: 30, alignment: .center) // ✅ consistent right edge
+                            .frame(width: 30, height: 30, alignment: .center)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -370,6 +402,24 @@ struct PracticeView: View {
                         let chunksToPlay = filteredSentenceChunksForPartial
                         guard !chunksToPlay.isEmpty else { return }
 
+                        // ✅ Only prepare a new session when we are starting (not stopping)
+                        let wasRunning = playback.isPartialPlaying || playback.isPlaying || playback.isPaused
+                        if !wasRunning {
+                            let mode: PracticeMode = {
+                                if wordsShadowingOn && sentenceShadowingOn { return .mixed }
+                                if wordsShadowingOn { return .words }
+                                if sentenceShadowingOn { return .sentences }
+                                return .partial
+                            }()
+
+                            stats.prepareNextSession(
+                                mode: mode,
+                                flaggedOnly: flaggedOnly,
+                                wordRepeats: wordRepeats,
+                                sentenceRepeats: sentenceRepeats
+                            )
+                        }
+
                         let settings = PlaybackSettings(
                             repeatPracticeEnabled: sentenceShadowingOn,
                             practiceRepeats: sentenceRepeats,
@@ -439,8 +489,8 @@ struct PracticeView: View {
 
                         showPlaybackScreen = true
                     } label: {
-                        // ✅ label changed from "Partial Play" to "Start"
-                        Label(playback.isPartialPlaying ? "Stop" : "Start", systemImage: playback.isPartialPlaying ? "stop.fill" : "play.fill")
+                        Label(playback.isPartialPlaying ? "Stop" : "Start",
+                              systemImage: playback.isPartialPlaying ? "stop.fill" : "play.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -542,9 +592,7 @@ struct PracticeView: View {
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 10)
-        .background(
-            Capsule(style: .continuous).fill(bg)
-        )
+        .background(Capsule(style: .continuous).fill(bg))
         .overlay(
             Capsule(style: .continuous)
                 .stroke(isOn && !disabled ? Color.blue.opacity(0.55) : Color.clear, lineWidth: 1)
@@ -560,11 +608,7 @@ struct PracticeView: View {
             )
     }
 
-    private func repeatsSelector(
-        title: String,
-        selection: Binding<Int>,
-        options: [Int]
-    ) -> some View {
+    private func repeatsSelector(title: String, selection: Binding<Int>, options: [Int]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.caption)
@@ -574,9 +618,7 @@ struct PracticeView: View {
                 ForEach(options, id: \.self) { v in
                     let selected = (selection.wrappedValue == v)
 
-                    Button {
-                        selection.wrappedValue = v
-                    } label: {
+                    Button { selection.wrappedValue = v } label: {
                         Text("\(v)x")
                             .font(.subheadline)
                             .fontWeight(selected ? .semibold : .regular)
