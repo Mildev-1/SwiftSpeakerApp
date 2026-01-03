@@ -183,7 +183,8 @@ final class TranscriptViewModel: ObservableObject {
     }
 
     func setFineTune(itemID: UUID, subchunkID: String, startOffset: Double, endOffset: Double) {
-        let clamp: (Double) -> Double = { min(0.5, max(-0.5, $0)) }
+        let limit = 0.7
+        let clamp: (Double) -> Double = { min(limit, max(-limit, $0)) }
         fineTunesBySubchunk[subchunkID] = SegmentFineTune(
             startOffset: clamp(startOffset),
             endOffset: clamp(endOffset)

@@ -363,7 +363,7 @@ struct SentenceEditSheet: View {
                             )
                         }
                     ),
-                    in: -0.5...0.5,
+                    in: -0.7...0.7,
                     step: 0.01
                 )
                 .disabled(!isUnlocked)
@@ -390,7 +390,7 @@ struct SentenceEditSheet: View {
                             )
                         }
                     ),
-                    in: -0.5...0.5,
+                    in: -0.7...0.7,
                     step: 0.01
                 )
                 .disabled(!isUnlocked)
@@ -496,12 +496,23 @@ struct SentenceEditSheet: View {
 
     private func adjustedTimes(for sc: SentenceSubchunk) -> (start: Double, end: Double) {
         let tune = transcriptVM.fineTune(for: sc.id)
+
         var s = sc.baseStart + tune.startOffset
         var e = sc.baseEnd + tune.endOffset
 
-        s = max(chunk.start, min(s, chunk.end))
-        e = max(chunk.start, min(e, chunk.end))
-        if e <= s { e = min(chunk.end, s + 0.05) }
+        // Allow edge parts to extend outside sentence bounds by up to the fine-tune limit.
+        // Middle parts stay clamped within the sentence.
+        let extra = 0.7
+        let isFirstPart = abs(sc.baseStart - chunk.start) < 0.0005
+        let isLastPart  = abs(sc.baseEnd - chunk.end) < 0.0005
+
+        let minStart = isFirstPart ? max(0.0, chunk.start - extra) : chunk.start
+        let maxEnd   = isLastPart  ? (chunk.end + extra) : chunk.end
+
+        s = max(minStart, min(s, maxEnd))
+        e = max(minStart, min(e, maxEnd))
+
+        if e <= s { e = s + 0.05 }
         return (s, e)
     }
 

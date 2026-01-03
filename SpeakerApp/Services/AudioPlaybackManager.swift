@@ -319,6 +319,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     self.currentSentenceID = chunk.id
                 }
 
+                // Build split points
                 let points: [Double]
                 if sentencesOnly, case .repeatPractice = mode {
                     points = [chunk.start, chunk.end]
@@ -330,13 +331,14 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     points = arr
                 }
 
+                // Play each part
                 for partIndex in 0..<(points.count - 1) {
                     if Task.isCancelled { break }
 
                     let rawStart = points[partIndex]
                     let rawEnd = points[partIndex + 1]
 
-                    // ✅ FIX: apply fine-tune offsets using the SAME stable id scheme as Edit
+                    // Apply fine-tune offsets (same stable ID scheme as Edit)
                     let subchunkID = SentenceSubchunkBuilder.subchunkID(
                         sentenceID: chunk.id,
                         start: rawStart,
@@ -347,15 +349,28 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     var start = rawStart + tune.startOffset
                     var end = rawEnd + tune.endOffset
 
-                    // Clamp to sentence boundaries
-                    start = max(chunk.start, min(start, chunk.end))
-                    end = max(chunk.start, min(end, chunk.end))
-                    if end <= start { end = min(chunk.end, start + 0.05) }
+                    // ✅ NEW: clamp with edge-extension so ±0.7 works on first/last parts
+                    let extra = 0.7
+                    let isFirstPart = (partIndex == 0)
+                    let isLastPart = (partIndex == points.count - 2)
 
+                    let minStart = isFirstPart ? max(0.0, chunk.start - extra) : chunk.start
+                    let maxEnd = isLastPart ? (chunk.end + extra) : chunk.end
+
+                    start = max(minStart, min(start, maxEnd))
+                    end = max(minStart, min(end, maxEnd))
+
+                    if end <= start {
+                        end = min(maxEnd, start + 0.05)
+                    }
+
+                    // repeats loop
                     for rep in 0..<practiceRepeats {
                         if Task.isCancelled { break }
 
-                        log(.verbose, "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(rawStart)),\(t(rawEnd))] tuned=[\(t(start)),\(t(end))] id=\(subchunkID)")
+                        log(.verbose,
+                            "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(rawStart)),\(t(rawEnd))] tuned=[\(t(start)),\(t(end))] id=\(subchunkID)"
+                        )
 
                         let ok = await self.playSegmentInternal(
                             start: start,
@@ -366,6 +381,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                         )
                         if !ok { break }
 
+                        // repeat-practice silence after each rep (already fixed)
                         if isRepeatPracticeMode {
                             let segDur = max(0.05, end - start)
                             log(.verbose, "PRACTICE_SENT silence=\(t(segDur * practiceMult))s")
@@ -375,6 +391,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
                     if Task.isCancelled { break }
 
+                    // between-parts cue
                     if case .beepBetweenCuts = mode {
                         await self.beep()
                         _ = await self.sleepWithPause(seconds: 0.12)
@@ -386,6 +403,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     }
                 }
 
+                // sentence boundary cue
                 if case .repeatPractice = mode {
                     await self.beep()
                     _ = await self.sleepWithPause(seconds: 0.12)
@@ -401,6 +419,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             log(.summary, "PRACTICE_SENT done")
         }
     }
+
 
     // MARK: - Word-shadowing partial play (explicit segments)
 
