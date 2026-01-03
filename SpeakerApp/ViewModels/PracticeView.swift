@@ -26,6 +26,10 @@ struct PracticeView: View {
     @State private var wordRepeats: Int = 2
     @State private var wordSilenceMultiplier: Double = 1.0
 
+    // Collapsibles
+    @State private var showFullscreenControls: Bool = false        // hidden by default
+    @State private var showFlaggingSentences: Bool = true          // visible by default
+
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
     }
@@ -41,24 +45,20 @@ struct PracticeView: View {
         return transcriptVM.sentenceChunks
     }
 
-    // MARK: - Body
-
     var body: some View {
         ZStack {
-            background
+            Color(.systemBackground).ignoresSafeArea()
 
             VStack(spacing: 0) {
                 topBar
 
                 ScrollView {
                     VStack(spacing: 18) {
-                        titleSection
-                        generalPlayCard
-                        playbackFontCard
-                        sentenceShadowingCard
+                        titleCard
                         wordsShadowingCard
+                        sentenceShadowingCard
                         partialPlayCard
-                        sentencesSection
+                        flaggingSentencesCard
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 16)
@@ -72,11 +72,8 @@ struct PracticeView: View {
 
         // Persist settings changes
         .onChange(of: playbackFontScale) { _ in persistPlaybackSettings() }
-
-        // ✅ Mixed mode requires NOT forcing mutual exclusion
         .onChange(of: sentenceShadowingOn) { _ in persistPlaybackSettings() }
         .onChange(of: wordsShadowingOn) { _ in persistPlaybackSettings() }
-
         .onChange(of: sentenceRepeats) { _ in persistPlaybackSettings() }
         .onChange(of: sentenceSilenceMultiplier) { _ in persistPlaybackSettings() }
         .onChange(of: sentencesPauseOnly) { _ in persistPlaybackSettings() }
@@ -94,14 +91,10 @@ struct PracticeView: View {
         }
     }
 
-    // MARK: - UI building blocks
-
-    private var background: some View {
-        Color(.systemBackground).ignoresSafeArea()
-    }
+    // MARK: - Top UI
 
     private var topBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Button {
                 playback.stop()
                 onClose()
@@ -115,57 +108,87 @@ struct PracticeView: View {
             .buttonStyle(.plain)
 
             Spacer()
+
+            // ✅ Header at the same level as back button
+            Text("My Reading Practice")
+                .font(.headline)
+                .foregroundStyle(.primary)
+
+            Spacer()
+
+            // Balancer so the header stays centered
+            Color.clear
+                .frame(width: 44, height: 1)
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 8)
     }
 
-    private var titleSection: some View {
-        HStack {
-            Text(item.scriptName.isEmpty ? "Practice" : item.scriptName)
-                .font(.title3)
-                .fontWeight(.semibold)
-                .multilineTextAlignment(.leading)
-                .frame(maxWidth: .infinity, alignment: .leading)
+    // MARK: - Cards
 
-            Spacer(minLength: 12)
+    private var titleCard: some View {
+        card {
+            HStack {
+                Spacer(minLength: 0)
+                Text(item.scriptName.isEmpty ? "Practice" : item.scriptName)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                    .multilineTextAlignment(.center)
+                    .foregroundStyle(Color.orange) // ✅ orange title
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 6)
         }
     }
 
-    private var generalPlayCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("General")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var wordsShadowingCard: some View {
+        let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
 
-                Button {
-                    showPlaybackScreen = true
-                } label: {
-                    Label("Open Fullscreen", systemImage: "rectangle.inset.filled.and.person.filled")
-                        .frame(maxWidth: .infinity)
+        return card {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Words Shadowing")
+                        .font(.headline)
+
+                    Spacer()
+
+                    Toggle("", isOn: $wordsShadowingOn)
+                        .labelsHidden()
+                        .disabled(wordSegs.isEmpty)
                 }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-    }
 
-    private var playbackFontCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Playback font size")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if wordSegs.isEmpty {
+                    Text("No hard words marked (🚀) in Edit yet.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    if wordsShadowingOn {
+                        VStack(alignment: .leading, spacing: 12) {
+                            repeatsSelector(
+                                title: "Repetitions",
+                                selection: $wordRepeats,
+                                options: [1, 2, 3, 4, 5]
+                            )
 
-                HStack(spacing: 12) {
-                    Image(systemName: "textformat.size.smaller")
-                        .foregroundStyle(.secondary)
-                    Slider(value: $playbackFontScale, in: 0.8...1.6, step: 0.05)
-                    Image(systemName: "textformat.size.larger")
-                        .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Silence multiplier")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+
+                                Slider(value: $wordSilenceMultiplier, in: 0.5...15.0, step: 0.1)
+                                Text("\(Int(wordSilenceMultiplier * 100))%")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        // ✅ Smooth emerge (no “fly”)
+                        .transition(emergeTransition)
+                    }
                 }
             }
+            // ✅ animate changes smoothly
+            .animation(.easeInOut(duration: 0.22), value: wordsShadowingOn)
         }
     }
 
@@ -199,66 +222,78 @@ struct PracticeView: View {
                                 .foregroundStyle(.secondary)
                         }
 
-                        Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
-                            .font(.subheadline)
                     }
+                    // ✅ Smooth emerge
+                    .transition(emergeTransition)
                 }
             }
-        }
-    }
-
-    private var wordsShadowingCard: some View {
-        let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
-
-        return card {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Words Shadowing")
-                        .font(.headline)
-
-                    Spacer()
-
-                    Toggle("", isOn: $wordsShadowingOn)
-                        .labelsHidden()
-                        .disabled(wordSegs.isEmpty)
-                }
-
-                if wordSegs.isEmpty {
-                    Text("No hard words marked (🚀) in Edit yet.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else if wordsShadowingOn {
-                    VStack(alignment: .leading, spacing: 12) {
-                        repeatsSelector(
-                            title: "Repetitions",
-                            selection: $wordRepeats,
-                            options: [1, 2, 3, 4, 5]
-                        )
-
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Silence multiplier")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-
-                            Slider(value: $wordSilenceMultiplier, in: 0.5...15.0, step: 0.1)
-                            Text("\(Int(wordSilenceMultiplier * 100))%")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-            }
+            .animation(.easeInOut(duration: 0.22), value: sentenceShadowingOn)
         }
     }
 
     private var partialPlayCard: some View {
-        return card {
+        card {
             VStack(alignment: .leading, spacing: 12) {
-                Text("Partial play")
-                    .font(.headline)
+                // No "Partial play" title
 
-                Toggle("Flagged Only", isOn: $flaggedOnly)
-                    .font(.subheadline)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        showFullscreenControls.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "slider.horizontal.3")
+                            .foregroundStyle(.secondary)
+                        Text("Playback display")
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                        Spacer()
+                        Image(systemName: showFullscreenControls ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if showFullscreenControls {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Button {
+                            showPlaybackScreen = true
+                        } label: {
+                            Label("Open Fullscreen", systemImage: "rectangle.inset.filled.and.person.filled")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Playback font size")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 12) {
+                                Image(systemName: "textformat.size.smaller")
+                                    .foregroundStyle(.secondary)
+                                Slider(value: $playbackFontScale, in: 0.8...1.6, step: 0.05)
+                                Image(systemName: "textformat.size.larger")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    // ✅ Smooth emerge (no move from above)
+                    .transition(emergeTransition)
+                }
+
+                Divider().opacity(0.6)
+
+                Toggle(isOn: $flaggedOnly) {
+                    Label("Flagged Only", systemImage: "flag.fill")
+                }
+                .font(.subheadline)
+                // ✅ NEW: always-visible global shaping toggle
+                Toggle(isOn: $sentencesPauseOnly) {
+                    Label("Sentences pause only", systemImage: "pause.circle")
+                }
+                .font(.subheadline)
 
                 HStack(spacing: 12) {
                     Button {
@@ -282,7 +317,6 @@ struct PracticeView: View {
 
                         transcriptVM.setPlaybackSettings(itemID: item.id, settings)
 
-                        // ✅ Mixed mode when BOTH toggles are ON
                         if sentenceShadowingOn && wordsShadowingOn {
                             let wordSegsBySentence = buildWordSegmentsBySentence(flaggedOnly: flaggedOnly)
 
@@ -307,7 +341,6 @@ struct PracticeView: View {
                             return
                         }
 
-                        // Words-only
                         if wordsShadowingOn {
                             let segs = buildWordSegments(flaggedOnly: flaggedOnly)
                             if segs.isEmpty { return }
@@ -323,7 +356,6 @@ struct PracticeView: View {
                             return
                         }
 
-                        // Sentence-only
                         playback.togglePartialPlay(
                             url: storedMP3URL,
                             chunks: chunksToPlay,
@@ -347,13 +379,11 @@ struct PracticeView: View {
                     .disabled(!FileManager.default.fileExists(atPath: storedMP3URL.path) || !hasTranscript)
 
                     Button {
-                        // bump repeats quickly
                         if sentenceShadowingOn && !wordsShadowingOn {
                             sentenceRepeats = min(3, sentenceRepeats + 1)
                         } else if wordsShadowingOn && !sentenceShadowingOn {
                             wordRepeats = min(5, wordRepeats + 1)
                         } else if sentenceShadowingOn && wordsShadowingOn {
-                            // mixed: bump sentence reps (keeps UI simple)
                             sentenceRepeats = min(3, sentenceRepeats + 1)
                         }
                     } label: {
@@ -363,35 +393,64 @@ struct PracticeView: View {
                     .buttonStyle(.bordered)
                 }
             }
+            .animation(.easeInOut(duration: 0.22), value: showFullscreenControls)
         }
     }
 
-    private var sentencesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if transcriptVM.sentenceChunks.isEmpty {
-                EmptyView()
-            } else {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Sentences")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+    private var flaggingSentencesCard: some View {
+        card {
+            VStack(alignment: .leading, spacing: 12) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.22)) {
+                        showFlaggingSentences.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "flag.fill")
+                            .foregroundStyle(.secondary)
+                        Text("Flagging Sentences")
+                            .font(.headline)
+                        Spacer()
+                        Image(systemName: showFlaggingSentences ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(.secondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
 
-                    LazyVStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
-                            PracticeSentenceFlagRow(
-                                chunk: chunk,
-                                index: idx + 1,
-                                itemID: item.id,
-                                transcriptVM: transcriptVM
-                            )
+                if showFlaggingSentences {
+                    if transcriptVM.sentenceChunks.isEmpty {
+                        Text("No transcript yet.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .transition(emergeTransition)
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 10) {
+                            ForEach(Array(transcriptVM.sentenceChunks.enumerated()), id: \.element.id) { idx, chunk in
+                                PracticeSentenceFlagRow(
+                                    chunk: chunk,
+                                    index: idx + 1,
+                                    itemID: item.id,
+                                    transcriptVM: transcriptVM
+                                )
+                            }
                         }
+                        .transition(emergeTransition)
                     }
                 }
             }
+            .animation(.easeInOut(duration: 0.22), value: showFlaggingSentences)
         }
     }
 
-    // MARK: - Helpers
+    // MARK: - Smooth transition used across collapsibles
+
+    /// “Emerges” without sliding in from outside the card.
+    private var emergeTransition: AnyTransition {
+        .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
+    }
+
+    // MARK: - Shared UI helpers
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
@@ -433,18 +492,18 @@ struct PracticeView: View {
         }
     }
 
+    // MARK: - Settings persistence
+
     private func applySavedPlaybackSettings() {
         let s = transcriptVM.playbackSettings.clamped()
         playbackFontScale = s.playbackFontScale
 
-        // sentence
         sentenceShadowingOn = s.repeatPracticeEnabled
         sentenceRepeats = s.practiceRepeats
         sentenceSilenceMultiplier = s.practiceSilenceMultiplier
         sentencesPauseOnly = s.sentencesPauseOnly
         flaggedOnly = s.flaggedOnly
 
-        // words
         wordsShadowingOn = s.wordShadowingEnabled
         wordRepeats = s.wordPracticeRepeats
         wordSilenceMultiplier = s.wordPracticeSilenceMultiplier
@@ -467,7 +526,7 @@ struct PracticeView: View {
         transcriptVM.saveCutPlan(itemID: item.id)
     }
 
-    // MARK: - Word segment extraction (flat list)
+    // MARK: - Word segments
 
     private func buildWordSegments(flaggedOnly: Bool) -> [AudioPlaybackManager.TimedSegment] {
         let boundsBySentence: [String: (Double, Double)] = Dictionary(
@@ -490,7 +549,6 @@ struct PracticeView: View {
                 s = max(bounds.0, min(s, bounds.1))
                 e = max(bounds.0, min(e, bounds.1))
                 if e <= s { e = min(bounds.1, s + 0.05) }
-
                 if (e - s) < 0.02 { continue }
 
                 out.append(.init(sentenceID: sentenceID, start: s, end: e))
@@ -499,8 +557,6 @@ struct PracticeView: View {
 
         return out.sorted { $0.start < $1.start }
     }
-
-    // MARK: - Word segment extraction (grouped by sentence) ✅ FIXED SCOPE
 
     private func buildWordSegmentsBySentence(flaggedOnly: Bool) -> [String: [AudioPlaybackManager.TimedSegment]] {
         let boundsBySentence: [String: (Double, Double)] = Dictionary(
@@ -526,7 +582,6 @@ struct PracticeView: View {
                 s = max(bounds.0, min(s, bounds.1))
                 e = max(bounds.0, min(e, bounds.1))
                 if e <= s { e = min(bounds.1, s + 0.05) }
-
                 if (e - s) < 0.02 { continue }
 
                 segs.append(.init(sentenceID: sentenceID, start: s, end: e))
@@ -541,8 +596,7 @@ struct PracticeView: View {
     }
 }
 
-// Put this BELOW PracticeView in the same file.
-// If you put it in a separate file, remove `private`.
+// Keep this below PracticeView
 private struct PracticeSentenceFlagRow: View {
     let chunk: SentenceChunk
     let index: Int
