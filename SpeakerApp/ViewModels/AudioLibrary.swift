@@ -1,8 +1,3 @@
-//
-//  AudioLibrary.swift
-//  SpeakerApp
-//
-
 import Foundation
 import Combine
 
@@ -21,6 +16,7 @@ final class AudioLibrary: ObservableObject {
     func loadFromDisk() {
         do {
             let loaded = try store.load()
+
             // prune entries if the stored file is missing
             let pruned = loaded.filter { item in
                 let url = storage.urlForStoredFile(relativePath: item.storedRelativePath)
@@ -28,7 +24,7 @@ final class AudioLibrary: ObservableObject {
             }
             items = pruned
 
-            // ✅ keep persisted DB consistent with prune result
+            // keep persisted DB consistent with prune result
             if pruned.count != loaded.count {
                 try? store.save(pruned)
             }
@@ -46,7 +42,7 @@ final class AudioLibrary: ObservableObject {
             guard name.hasPrefix(prefix) else { continue }
             let suffix = String(name.dropFirst(prefix.count))
             if let n = Int(suffix) {
-                maxNumber = max(maxNumber, n)
+                maxNumber = Swift.max(maxNumber, n)
             }
         }
 
@@ -79,7 +75,6 @@ final class AudioLibrary: ObservableObject {
         do { try store.save(items) } catch { }
     }
 
-    /// ✅ Deletes row + internal audio + transcript + persists DB.
     func deleteItem(id: UUID) {
         guard let idx = items.firstIndex(where: { $0.id == id }) else { return }
         let item = items[idx]
@@ -87,11 +82,39 @@ final class AudioLibrary: ObservableObject {
         try? storage.deleteStoredFile(relativePath: item.storedRelativePath)
         transcriptStore.delete(itemID: item.id)
 
-        // ✅ delete manual cut plan + sentence edits
-        CutPlanStore.shared.delete(itemID: item.id)
-
         items.remove(at: idx)
-        try? store.save(items)
+        do { try store.save(items) } catch { }
     }
 
+    // MARK: - Reordering
+
+    func moveItems(from source: IndexSet, to destination: Int) {
+        items.reorder(from: source, to: destination)
+        do { try store.save(items) } catch { }
+    }
+}
+
+// ✅ MUST be at file scope (outside the class)
+private extension Array {
+    mutating func reorder(from source: IndexSet, to destination: Int) {
+        guard !source.isEmpty else { return }
+
+        // Capture in original order
+        let moving = source.sorted().map { self[$0] }
+
+        // Remove from back to front
+        for i in source.sorted(by: >) {
+            remove(at: i)
+        }
+
+        // Adjust destination for removed items that were before it
+        var dest = destination
+        let removedBefore = source.filter { $0 < destination }.count
+        dest -= removedBefore
+
+        // Clamp
+        dest = Swift.max(0, Swift.min(dest, count))
+
+        insert(contentsOf: moving, at: dest)
+    }
 }

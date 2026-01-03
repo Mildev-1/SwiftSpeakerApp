@@ -17,6 +17,9 @@ struct ContentView: View {
 
     @State private var pendingDeleteItem: AudioItem? = nil
 
+    // ✅ Enables drag-reorder UI
+    @State private var editMode: EditMode = .inactive
+
     private var mp3Type: UTType {
         UTType(filenameExtension: "mp3") ?? .audio
     }
@@ -55,11 +58,15 @@ struct ContentView: View {
                                 }
                             }
                         }
+                        // ✅ Drag & drop reordering
+                        .onMove(perform: library.moveItems)
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
                 }
                 .padding(.top, 8)
+                // ✅ List edit mode binding
+                .environment(\.editMode, $editMode)
 
                 if let item = editingItem {
                     AudioEditView(
@@ -159,6 +166,10 @@ struct ContentView: View {
                 .fontWeight(.semibold)
 
             Spacer()
+
+            // ✅ Drag reorder toggle (system)
+            EditButton()
+                .buttonStyle(.bordered)
 
             Button {
                 isShowingImporter = true
