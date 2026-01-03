@@ -95,8 +95,12 @@ enum SentenceCursorTimeMapper {
         return uniq
     }
 
-    /// Extract hard words: each 🚀 marks the NEXT word after the emoji (or the word under cursor).
-    /// Returned segments are stable and can be fine-tuned separately from sentence parts.
+    /// Extract hard words:
+    /// - 🚀 marks the NEXT 1 word (existing behavior)
+    /// - 🚀🚀 marks the NEXT 2 words
+    /// - 🚀🚀🚀 (or more) marks the NEXT 3 words (capped at 3)
+    ///
+    /// Returned segments are stable (ID derived from start/end ms) and can be fine-tuned separately.
     static func hardWordSegmentsFromEditedText(
         editedText: String,
         chunk: SentenceChunk,
@@ -114,8 +118,6 @@ enum SentenceCursorTimeMapper {
         guard !ranges.isEmpty else { return [] }
 
         let ns = editedText as NSString
-        let emoji = rocketEmoji as NSString
-        let emojiLen = emoji.length
 
         var out: [HardWordSegment] = []
         var seen: Set<String> = []
@@ -125,23 +127,55 @@ enum SentenceCursorTimeMapper {
             let found = ns.range(of: rocketEmoji, options: [], range: searchRange)
             if found.location == NSNotFound { break }
 
-            let cursor = found.location + emojiLen
+            // ✅ Robust: compute the rocket run using actual matched lengths, not emojiLen math.
+            let run = rocketRun(in: ns, from: found.location)
+            let requestedCount = max(run.count, 1)
+            let bundleCount = min(requestedCount, 4)   // ✅ up to 4 words
+
+            // Cursor right after the full rocket run (UTF16 index)
+            let cursorUTF16 = run.endLocation
 
             let baseCursor = baseCursorLocation(
                 editedText: editedText,
-                cursorLocationUTF16: cursor
+                cursorLocationUTF16: cursorUTF16
             )
 
-            let idx = hardWordIndex(baseCursor: baseCursor, ranges: ranges)
-            let w = words[idx]
+            let startIdx = hardWordIndex(baseCursor: baseCursor, ranges: ranges)
+            let safeStart = min(max(0, startIdx), words.count - 1)
 
-            let id = HardWordSegment.makeID(sentenceID: chunk.id, start: w.start, end: w.end)
+            // If not enough words remain, just take what's available
+            let safeEnd = min(words.count - 1, safeStart + bundleCount - 1)
+
+            let startWord = words[safeStart]
+            let endWord = words[safeEnd]
+
+            let segStart = startWord.start
+            let segEnd = endWord.end
+
+            let label: String
+            if safeStart == safeEnd {
+                label = startWord.word
+            } else {
+                let toks = words[safeStart...safeEnd].map { $0.word }
+                label = joinWords(toks)
+            }
+
+            let id = HardWordSegment.makeID(sentenceID: chunk.id, start: segStart, end: segEnd)
             if !seen.contains(id) {
-                out.append(HardWordSegment(sentenceID: chunk.id, index: out.count, start: w.start, end: w.end, word: w.word))
+                out.append(
+                    HardWordSegment(
+                        sentenceID: chunk.id,
+                        index: out.count,
+                        start: segStart,
+                        end: segEnd,
+                        word: label
+                    )
+                )
                 seen.insert(id)
             }
 
-            let nextLoc = found.location + max(found.length, 1)
+            // ✅ Advance search past the entire rocket run (robust)
+            let nextLoc = max(run.endLocation, found.location + max(found.length, 1))
             if nextLoc >= ns.length { break }
             searchRange = NSRange(location: nextLoc, length: ns.length - nextLoc)
         }
@@ -149,7 +183,49 @@ enum SentenceCursorTimeMapper {
         return out
     }
 
+
+
     // MARK: - Helpers
+
+    /// Count how many 🚀 occur consecutively starting at `location` (UTF16 indexing, via NSString).
+    private static func rocketRunLength(in ns: NSString, from location: Int, emojiLen: Int) -> Int {
+        guard location >= 0, location < ns.length else { return 0 }
+        guard emojiLen > 0 else { return 0 }
+
+        var count = 0
+        var loc = location
+
+        while loc + emojiLen <= ns.length {
+            let r = NSRange(location: loc, length: emojiLen)
+            let slice = ns.substring(with: r)
+            if slice == rocketEmoji {
+                count += 1
+                loc += emojiLen
+            } else {
+                break
+            }
+        }
+
+        return count
+    }
+    
+    /// Robustly count consecutive 🚀 starting at a UTF16 location.
+    /// Uses actual matched range lengths (handles variation selectors / pasted emojis).
+    private static func rocketRun(in ns: NSString, from location: Int) -> (count: Int, endLocation: Int) {
+        guard location >= 0, location < ns.length else { return (0, location) }
+
+        var count = 0
+        var loc = location
+
+        while loc < ns.length {
+            let r = ns.range(of: rocketEmoji, options: [], range: NSRange(location: loc, length: ns.length - loc))
+            guard r.location == loc, r.length > 0 else { break }
+            count += 1
+            loc += r.length
+        }
+
+        return (count, loc)
+    }
 
     private static func baseCursorLocation(editedText: String, cursorLocationUTF16: Int) -> Int {
         let editedNSString = editedText as NSString
