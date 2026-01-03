@@ -288,6 +288,16 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         partialIndex = 0
         partialTotal = chunks.count
 
+        // ✅ NEW: config used ONLY for "Sentences pause only" (whole sentence as one segment)
+        let fullSentenceConfig = SegmentPlaybackConfig(
+            head: headPad,
+            tail: tailPad * 2.0,               // ← key change: extra tail only here
+            minDuration: 0.03,
+            pollInterval: 0.020,
+            useRemainingBasedPolling: false,
+            label: "SENTENCE_FULL"
+        )
+
         partialTask = Task { [weak self] in
             guard let self else { return }
 
@@ -302,6 +312,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 practiceMult = 1.0
                 sentencesOnly = false
                 isRepeatPracticeMode = false
+
             case .repeatPractice(let repeats, let silenceMultiplier, let sOnly):
                 practiceRepeats = min(max(repeats, 1), 3)
                 practiceMult = min(max(silenceMultiplier, 0.5), 2.0)
@@ -322,7 +333,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 // Build split points
                 let points: [Double]
                 if sentencesOnly, case .repeatPractice = mode {
-                    points = [chunk.start, chunk.end]
+                    points = [chunk.start, chunk.end]   // whole sentence only
                 } else {
                     let cuts = (manualCutsBySentence[chunk.id] ?? []).sorted()
                     var arr = [chunk.start]
@@ -331,14 +342,16 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     points = arr
                 }
 
-                // Play each part
+                // If this is whole-sentence playback, points.count will be 2 and partIndex will only be 0.
+                let isWholeSentenceSingleSegment = (points.count == 2)
+
                 for partIndex in 0..<(points.count - 1) {
                     if Task.isCancelled { break }
 
                     let rawStart = points[partIndex]
                     let rawEnd = points[partIndex + 1]
 
-                    // Apply fine-tune offsets (same stable ID scheme as Edit)
+                    // Fine-tune (same stable ID scheme as Edit)
                     let subchunkID = SentenceSubchunkBuilder.subchunkID(
                         sentenceID: chunk.id,
                         start: rawStart,
@@ -349,49 +362,41 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     var start = rawStart + tune.startOffset
                     var end = rawEnd + tune.endOffset
 
-                    // ✅ NEW: clamp with edge-extension so ±0.7 works on first/last parts
+                    // Clamp, but allow edge parts to extend by up to 0.7s
                     let extra = 0.7
                     let isFirstPart = (partIndex == 0)
-                    let isLastPart = (partIndex == points.count - 2)
+                    let isLastPart  = (partIndex == points.count - 2)
 
                     let minStart = isFirstPart ? max(0.0, chunk.start - extra) : chunk.start
-                    let maxEnd = isLastPart ? (chunk.end + extra) : chunk.end
+                    let maxEnd   = isLastPart  ? (chunk.end + extra) : chunk.end
 
                     start = max(minStart, min(start, maxEnd))
-                    end = max(minStart, min(end, maxEnd))
+                    end   = max(minStart, min(end, maxEnd))
+                    if end <= start { end = min(maxEnd, start + 0.05) }
 
-                    if end <= start {
-                        end = min(maxEnd, start + 0.05)
-                    }
-
-                    // repeats loop
                     for rep in 0..<practiceRepeats {
                         if Task.isCancelled { break }
 
-                        log(.verbose,
-                            "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(rawStart)),\(t(rawEnd))] tuned=[\(t(start)),\(t(end))] id=\(subchunkID)"
-                        )
+                        // ✅ NEW: use fuller tail padding ONLY for whole-sentence segment playback
+                        let configToUse = isWholeSentenceSingleSegment ? fullSentenceConfig : self.sentenceConfig
 
                         let ok = await self.playSegmentInternal(
                             start: start,
                             end: end,
                             with: url,
-                            config: self.sentenceConfig,
+                            config: configToUse,
                             traceTag: "PRACTICE_SENT"
                         )
                         if !ok { break }
 
-                        // repeat-practice silence after each rep (already fixed)
                         if isRepeatPracticeMode {
                             let segDur = max(0.05, end - start)
-                            log(.verbose, "PRACTICE_SENT silence=\(t(segDur * practiceMult))s")
                             _ = await self.sleepWithPause(seconds: segDur * practiceMult)
                         }
                     }
 
                     if Task.isCancelled { break }
 
-                    // between-parts cue
                     if case .beepBetweenCuts = mode {
                         await self.beep()
                         _ = await self.sleepWithPause(seconds: 0.12)
@@ -403,7 +408,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                     }
                 }
 
-                // sentence boundary cue
                 if case .repeatPractice = mode {
                     await self.beep()
                     _ = await self.sleepWithPause(seconds: 0.12)
@@ -419,6 +423,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             log(.summary, "PRACTICE_SENT done")
         }
     }
+
 
 
     // MARK: - Word-shadowing partial play (explicit segments)
