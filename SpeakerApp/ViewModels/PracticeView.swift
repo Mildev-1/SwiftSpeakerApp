@@ -28,7 +28,7 @@ struct PracticeView: View {
 
     // Collapsibles
     @State private var showFullscreenControls: Bool = false        // hidden by default
-    @State private var showFlaggingSentences: Bool = false         // ✅ collapsed by default
+    @State private var showFlaggingSentences: Bool = false         // collapsed by default
 
     // Mode details (collapsed by default)
     @State private var showWordsDetails: Bool = false
@@ -60,7 +60,6 @@ struct PracticeView: View {
                     VStack(spacing: 18) {
                         titleCard
 
-                        // ✅ Small label above modes
                         Text("Shadowing practice")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -122,7 +121,6 @@ struct PracticeView: View {
 
             Spacer()
 
-            // ✅ Add book icon
             HStack(spacing: 8) {
                 Image(systemName: "book.open")
                     .foregroundStyle(.secondary)
@@ -158,8 +156,7 @@ struct PracticeView: View {
         }
     }
 
-    // ✅ Words: collapsible, no toggle shown, header pill toggles state.
-    // ✅ Chevron is now far right (indicator pill moved left of it).
+    // ✅ Words: same icon combo as sentences; chevron aligned max-right like Playback display.
     private var wordsShadowingCard: some View {
         let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
         let hasWords = !wordSegs.isEmpty
@@ -168,10 +165,8 @@ struct PracticeView: View {
             VStack(alignment: .leading, spacing: 12) {
 
                 HStack(spacing: 10) {
-                    // Icon + title
                     HStack(spacing: 8) {
-                        Image(systemName: "textformat.abc") // short/word vibe
-                            .foregroundStyle(.secondary)
+                        shadowingIconCombo
                         Text("Words")
                             .font(.headline)
                             .foregroundStyle(.primary)
@@ -179,7 +174,6 @@ struct PracticeView: View {
 
                     Spacer()
 
-                    // Status pill (toggle ON/OFF without expanding)
                     Button {
                         guard hasWords else { return }
                         withAnimation(.easeInOut(duration: 0.15)) {
@@ -194,9 +188,7 @@ struct PracticeView: View {
                     }
                     .buttonStyle(.plain)
                     .disabled(!hasWords)
-                    .accessibilityLabel(hasWords ? "Toggle Words" : "No hard words available")
 
-                    // Collapse chevron (max right)
                     Button {
                         withAnimation(.easeInOut(duration: 0.22)) {
                             showWordsDetails.toggle()
@@ -204,8 +196,7 @@ struct PracticeView: View {
                     } label: {
                         Image(systemName: showWordsDetails ? "chevron.up" : "chevron.down")
                             .foregroundStyle(.secondary)
-                            .padding(.vertical, 6)
-                            .padding(.horizontal, 8)
+                            .frame(width: 30, height: 30, alignment: .center) // ✅ consistent right edge
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -243,16 +234,14 @@ struct PracticeView: View {
         }
     }
 
-    // ✅ Sentences: collapsible, no toggle shown, header pill toggles state.
-    // ✅ Chevron is now far right (indicator pill moved left of it).
+    // ✅ Sentences: same icon combo as words; chevron aligned max-right like Playback display.
     private var sentenceShadowingCard: some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
 
                 HStack(spacing: 10) {
                     HStack(spacing: 8) {
-                        Image(systemName: "text.alignleft") // longer/sentence vibe
-                            .foregroundStyle(.secondary)
+                        shadowingIconCombo
                         Text("Sentences")
                             .font(.headline)
                             .foregroundStyle(.primary)
@@ -272,7 +261,6 @@ struct PracticeView: View {
                         )
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Toggle Sentences")
 
                     Button {
                         withAnimation(.easeInOut(duration: 0.22)) {
@@ -281,8 +269,7 @@ struct PracticeView: View {
                     } label: {
                         Image(systemName: showSentenceDetails ? "chevron.up" : "chevron.down")
                             .foregroundStyle(.secondary)
-                            .padding(.vertical, 6)
-                            .padding(.horizontal, 8)
+                            .frame(width: 30, height: 30, alignment: .center) // ✅ consistent right edge
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
@@ -452,7 +439,8 @@ struct PracticeView: View {
 
                         showPlaybackScreen = true
                     } label: {
-                        Label("Partial Play", systemImage: playback.isPartialPlaying ? "stop.fill" : "play.fill")
+                        // ✅ label changed from "Partial Play" to "Start"
+                        Label(playback.isPartialPlaying ? "Stop" : "Start", systemImage: playback.isPartialPlaying ? "stop.fill" : "play.fill")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
@@ -523,9 +511,18 @@ struct PracticeView: View {
         }
     }
 
+    // MARK: - Icon combo for both words/sentences
+
+    private var shadowingIconCombo: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "person.wave.2.fill")
+            Image(systemName: "repeat")
+        }
+        .foregroundStyle(.secondary)
+    }
+
     // MARK: - UI building blocks
 
-    /// “Emerges” without sliding in from outside the card.
     private var emergeTransition: AnyTransition {
         .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
     }
@@ -563,7 +560,6 @@ struct PracticeView: View {
             )
     }
 
-    // More distinct selected blue
     private func repeatsSelector(
         title: String,
         selection: Binding<Int>,
@@ -725,7 +721,7 @@ private struct PracticeSentenceFlagRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 34, alignment: .trailing)
 
-            Text(transcriptVM.displayText(for: chunk))
+            Text(transcriptVM.attributedDisplayText(for: chunk))
                 .font(.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
