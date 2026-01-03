@@ -10,88 +10,109 @@ struct AutoSizingStyledCursorTextView: UIViewRepresentable {
 
     let isEditable: Bool
     @Binding var resignFocusToken: Int
-
     @Binding var measuredHeight: CGFloat
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
-        tv.isScrollEnabled = false
+    var disableContextMenu: Bool = true
 
-        tv.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-        tv.textContainer.lineFragmentPadding = 0
-        tv.textContainer.widthTracksTextView = true
-        tv.textContainer.lineBreakMode = .byWordWrapping
+    func makeUIView(context: Context) -> UITextView {
+        let tv: UITextView = disableContextMenu ? LockedActionsTextView() : UITextView()
+
+        tv.delegate = context.coordinator
+        tv.isScrollEnabled = false
 
         tv.font = UIFont.systemFont(ofSize: 17)
         tv.backgroundColor = UIColor.orange
         tv.textColor = UIColor.black
         tv.tintColor = UIColor.black
 
-        tv.delegate = context.coordinator
+        tv.textContainerInset = UIEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+        tv.textContainer.lineFragmentPadding = 0
+        tv.textContainer.widthTracksTextView = true
+        tv.textContainer.lineBreakMode = .byWordWrapping
+
         tv.isEditable = isEditable
         tv.isSelectable = true
 
-        // ✅ Important: ensure SwiftUI can constrain width (prevents overflow)
+        // Kill input assistant bar
+        tv.inputAssistantItem.leadingBarButtonGroups = []
+        tv.inputAssistantItem.trailingBarButtonGroups = []
+
+        // Reduce “smart” edits (optional)
+        tv.autocorrectionType = .no
+        tv.smartDashesType = .no
+        tv.smartQuotesType = .no
+        tv.smartInsertDeleteType = .no
+
+        if #available(iOS 11.0, *) {
+            tv.textDragInteraction?.isEnabled = false
+        }
+
+        // ✅ Critical: allow SwiftUI to constrain width (prevents runaway single-line width)
         tv.setContentHuggingPriority(.defaultLow, for: .horizontal)
         tv.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // Vertical: let SwiftUI control height; we measure and feed it back
+        tv.setContentHuggingPriority(.defaultLow, for: .vertical)
+        tv.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+
+        tv.text = text
+        tv.selectedRange = selectedRange
+
+        DispatchQueue.main.async {
+            measuredHeight = Self.fittingHeight(for: tv)
+        }
 
         return tv
     }
 
     func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.isEditable = isEditable
+
         if uiView.text != text {
             uiView.text = text
         }
 
-        uiView.isEditable = isEditable
-        uiView.backgroundColor = UIColor.orange
-        uiView.textColor = UIColor.black
-        uiView.tintColor = UIColor.black
-
-        // Keep selection in sync
-        let nsLen = (uiView.text as NSString).length
-        let clampedLoc = max(0, min(selectedRange.location, nsLen))
-        let clampedLen = max(0, min(selectedRange.length, nsLen - clampedLoc))
-        let safe = NSRange(location: clampedLoc, length: clampedLen)
-
-        if let start = uiView.position(from: uiView.beginningOfDocument, offset: safe.location),
-           let end = uiView.position(from: start, offset: safe.length),
-           let tr = uiView.textRange(from: start, to: end),
-           uiView.selectedTextRange != tr {
-            uiView.selectedTextRange = tr
+        if uiView.selectedRange.location != selectedRange.location || uiView.selectedRange.length != selectedRange.length {
+            uiView.selectedRange = selectedRange
         }
 
-        // Focus handling
-        if isFocused && !uiView.isFirstResponder {
-            uiView.becomeFirstResponder()
-        } else if !isFocused && uiView.isFirstResponder {
-            uiView.resignFirstResponder()
-        }
-
-        // Resign request (token bump)
         if context.coordinator.lastResignToken != resignFocusToken {
             context.coordinator.lastResignToken = resignFocusToken
             uiView.resignFirstResponder()
             isFocused = false
         }
 
-        // ✅ Measure height ONLY when we have a real width (avoid UIScreen fallback!)
         DispatchQueue.main.async {
-            let w = uiView.bounds.width
-            guard w > 10 else { return } // wait until laid out inside the sheet
-
-            let size = uiView.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude))
-            if abs(measuredHeight - size.height) > 0.5 {
-                measuredHeight = size.height
-            }
+            measuredHeight = Self.fittingHeight(for: uiView)
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    // MARK: - Height
+
+    private static func fittingHeight(for tv: UITextView) -> CGFloat {
+        // Ensure layout has applied the correct width constraints
+        tv.layoutIfNeeded()
+
+        // Prefer current constrained width; if not ready yet, fall back to screen-safe width
+        var width = tv.bounds.width
+        if width <= 1 {
+            width = tv.superview?.bounds.width ?? UIScreen.main.bounds.width
+        }
+        width = max(1, width)
+
+        let target = CGSize(width: width, height: .greatestFiniteMagnitude)
+        let h = tv.sizeThatFits(target).height
+
+        return ceil(h)
+    }
+
+    // MARK: - Coordinator
+
     final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: AutoSizingStyledCursorTextView
-        var lastResignToken: Int = 0
+        let parent: AutoSizingStyledCursorTextView
+        var lastResignToken: Int
 
         init(_ parent: AutoSizingStyledCursorTextView) {
             self.parent = parent
@@ -100,132 +121,50 @@ struct AutoSizingStyledCursorTextView: UIViewRepresentable {
 
         func textViewDidBeginEditing(_ textView: UITextView) {
             parent.isFocused = true
+            parent.selectedRange = textView.selectedRange
         }
 
         func textViewDidEndEditing(_ textView: UITextView) {
             parent.isFocused = false
+            parent.selectedRange = textView.selectedRange
         }
 
         func textViewDidChange(_ textView: UITextView) {
             parent.text = textView.text ?? ""
-            let w = textView.bounds.width
-            guard w > 10 else { return }
-            let size = textView.sizeThatFits(CGSize(width: w, height: .greatestFiniteMagnitude))
-            if abs(parent.measuredHeight - size.height) > 0.5 {
-                parent.measuredHeight = size.height
+            parent.selectedRange = textView.selectedRange
+
+            DispatchQueue.main.async {
+                self.parent.measuredHeight = AutoSizingStyledCursorTextView.fittingHeight(for: textView)
             }
         }
 
         func textViewDidChangeSelection(_ textView: UITextView) {
+            // ✅ Collapse selection to caret only (no select/select-all highlighting)
+            if parent.disableContextMenu, textView.selectedRange.length > 0 {
+                let caret = NSRange(
+                    location: textView.selectedRange.location + textView.selectedRange.length,
+                    length: 0
+                )
+                textView.selectedRange = caret
+            }
             parent.selectedRange = textView.selectedRange
         }
     }
 }
 
-#elseif os(macOS)
-import AppKit
+// MARK: - Locked actions (no menu)
 
-struct AutoSizingStyledCursorTextView: NSViewRepresentable {
-    @Binding var text: String
-    @Binding var selectedRange: NSRange
-    @Binding var isFocused: Bool
-
-    let isEditable: Bool
-    @Binding var resignFocusToken: Int
-    @Binding var measuredHeight: CGFloat
-
-    func makeNSView(context: Context) -> NSScrollView {
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = false
-        scroll.hasHorizontalScroller = false
-        scroll.borderType = .noBorder
-        scroll.drawsBackground = false
-
-        let tv = NSTextView()
-        tv.isVerticallyResizable = true
-        tv.isHorizontallyResizable = false
-        tv.autoresizingMask = [.width]
-        tv.textContainerInset = NSSize(width: 10, height: 10)
-        tv.font = NSFont.systemFont(ofSize: 17)
-        tv.backgroundColor = NSColor.orange
-        tv.textColor = NSColor.black
-        tv.isEditable = isEditable
-        tv.isSelectable = true
-        tv.delegate = context.coordinator
-
-        // ✅ Track width so wrapping matches sheet width (prevents overflow)
-        tv.textContainer?.widthTracksTextView = true
-        tv.textContainer?.lineBreakMode = .byWordWrapping
-
-        scroll.documentView = tv
-        return scroll
+final class LockedActionsTextView: UITextView {
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        false
     }
 
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let tv = nsView.documentView as? NSTextView else { return }
-
-        if tv.string != text {
-            tv.string = text
-        }
-
-        tv.isEditable = isEditable
-        tv.backgroundColor = NSColor.orange
-        tv.textColor = NSColor.black
-
-        // Selection
-        let len = (tv.string as NSString).length
-        let loc = max(0, min(selectedRange.location, len))
-        let slen = max(0, min(selectedRange.length, len - loc))
-        tv.setSelectedRange(NSRange(location: loc, length: slen))
-
-        // Resign request
-        if context.coordinator.lastResignToken != resignFocusToken {
-            context.coordinator.lastResignToken = resignFocusToken
-            tv.window?.makeFirstResponder(nil)
-            isFocused = false
-        }
-
-        // ✅ Measure height after layout
-        DispatchQueue.main.async {
-            tv.layoutManager?.ensureLayout(for: tv.textContainer!)
-            let used = tv.layoutManager?.usedRect(for: tv.textContainer!).height ?? 0
-            let h = used + tv.textContainerInset.height * 2
-            if abs(measuredHeight - h) > 0.5 {
-                measuredHeight = h
-            }
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: AutoSizingStyledCursorTextView
-        var lastResignToken: Int = 0
-
-        init(_ parent: AutoSizingStyledCursorTextView) {
-            self.parent = parent
-            self.lastResignToken = parent.resignFocusToken
-        }
-
-        func textDidBeginEditing(_ notification: Notification) { parent.isFocused = true }
-        func textDidEndEditing(_ notification: Notification) { parent.isFocused = false }
-
-        func textDidChange(_ notification: Notification) {
-            guard let tv = notification.object as? NSTextView else { return }
-            parent.text = tv.string
-
-            tv.layoutManager?.ensureLayout(for: tv.textContainer!)
-            let used = tv.layoutManager?.usedRect(for: tv.textContainer!).height ?? 0
-            let h = used + tv.textContainerInset.height * 2
-            if abs(parent.measuredHeight - h) > 0.5 {
-                parent.measuredHeight = h
-            }
-        }
-
-        func textViewDidChangeSelection(_ notification: Notification) {
-            guard let tv = notification.object as? NSTextView else { return }
-            parent.selectedRange = tv.selectedRange()
-        }
-    }
+    override func copy(_ sender: Any?) {}
+    override func cut(_ sender: Any?) {}
+    override func paste(_ sender: Any?) {}
+    override func select(_ sender: Any?) {}
+    override func selectAll(_ sender: Any?) {}
+    override func delete(_ sender: Any?) {}
 }
+
 #endif
