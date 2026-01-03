@@ -18,8 +18,19 @@ struct AudioEditView: View {
     @State private var titleText: String = ""
     @State private var lastSavedTitle: String = ""
 
+    // ✅ Voice (editable)
+    @State private var voiceText: String = ""
+    @State private var lastSavedVoice: String = ""
+
+    private let transcriptStore = TranscriptStore.shared
+
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
+    }
+
+    /// Always read latest persisted values (languageCode / voiceName) from library if available.
+    private var currentItem: AudioItem {
+        library.items.first(where: { $0.id == item.id }) ?? item
     }
 
     var body: some View {
@@ -46,8 +57,14 @@ struct AudioEditView: View {
             transcriptVM.loadIfAvailable(itemID: item.id)
             playback.loadIfNeeded(url: storedMP3URL)
 
-            titleText = item.scriptName
-            lastSavedTitle = item.scriptName
+            // Title
+            titleText = currentItem.scriptName
+            lastSavedTitle = currentItem.scriptName
+
+            // Voice
+            let v = (currentItem.voiceName ?? "")
+            voiceText = v
+            lastSavedVoice = v
         }
         .onDisappear {
             playback.stop()
@@ -98,8 +115,34 @@ struct AudioEditView: View {
 
     private var headerSection: some View {
         VStack(spacing: 10) {
+
+            // ✅ Flag centered above title if available
+            if let flag = LanguageFlag.emoji(for: currentItem.languageCode) {
+                Text(flag)
+                    .font(.system(size: 46))
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.bottom, 2)
+            }
+
             // ✅ Multi-line editable title
             multilineTitleField
+
+            // ✅ Voice label + editable field under title
+            VStack(spacing: 6) {
+                Text("Voice")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                TextField("Voice", text: $voiceText)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 420)
+                    .multilineTextAlignment(.center)
+                    .onSubmit { persistVoiceIfNeeded() }
+                    .onChange(of: voiceText) { _ in
+                        persistVoiceIfNeeded()
+                    }
+            }
         }
     }
 
@@ -135,6 +178,14 @@ struct AudioEditView: View {
 
         library.updateScriptName(id: item.id, name: trimmed)
         lastSavedTitle = trimmed
+    }
+
+    private func persistVoiceIfNeeded() {
+        let trimmed = voiceText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed != lastSavedVoice else { return }
+
+        library.updateVoiceName(id: item.id, voiceName: trimmed)
+        lastSavedVoice = trimmed
     }
 
     // ✅ Basic Play / Stop here
@@ -212,7 +263,7 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // ✅ File name block moved here (below title, above transcription bubble)
+            // File name block
             VStack(spacing: 6) {
                 Text("File name:")
                     .font(.caption)
@@ -251,8 +302,6 @@ struct AudioEditView: View {
                         Text("German").tag("de")
                         Text("French").tag("fr")
                         Text("Italian").tag("it")
-                        Text("Ukrainian").tag("uk")
-                        Text("Russian").tag("ru")
                     }
                     .pickerStyle(.menu)
                 }
@@ -271,6 +320,15 @@ struct AudioEditView: View {
                                 model: "base",
                                 force: force
                             )
+
+                            // ✅ Persist detected languageCode into AudioItem after transcription
+                            if let rec = try? transcriptStore.load(itemID: item.id),
+                               let lang = rec.languageCode,
+                               !lang.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                await MainActor.run {
+                                    library.updateLanguageCode(id: item.id, languageCode: lang)
+                                }
+                            }
                         }
                     } label: {
                         Label(

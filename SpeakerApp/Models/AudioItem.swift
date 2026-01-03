@@ -1,38 +1,36 @@
-//
-//  AudioItem.swift
-//  SpeakerApp
-//
-//  Stores scriptName (shown in grid) and the copied file location (internal storage).
-//
-
 import Foundation
 
-struct AudioItem: Identifiable, Hashable, Codable {
+struct AudioItem: Identifiable, Codable, Hashable {
     let id: UUID
 
-    /// Shown in the grid, e.g. "MyScript01"
     var scriptName: String
+    var originalFileName: String
+    var storedFileName: String
+    var storedRelativePath: String
 
-    /// Original filename the user picked, preserved for later edit processing
-    let originalFileName: String
+    /// User-editable label shown in Edit screen under Title.
+    /// Optional so older saved JSON loads without migration code.
+    var voiceName: String?
 
-    /// The filename actually stored in app internal storage (usually same as originalFileName)
-    let storedFileName: String
-
-    /// Relative path under AudioFiles folder (we persist this; absolute paths can change)
-    let storedRelativePath: String
+    /// Persisted after transcription. Example: "en", "es", "pl", "de", "fr", "it", etc.
+    /// Optional so older saved JSON loads without migration code.
+    var languageCode: String?
 
     init(
         id: UUID = UUID(),
         scriptName: String,
         originalFileName: String,
         storedFileName: String,
-        storedRelativePath: String
+        storedRelativePath: String,
+        voiceName: String? = nil,
+        languageCode: String? = nil
     ) {
         self.id = id
         self.scriptName = scriptName
         self.originalFileName = originalFileName
         self.storedFileName = storedFileName
         self.storedRelativePath = storedRelativePath
+        self.voiceName = voiceName
+        self.languageCode = languageCode
     }
 }

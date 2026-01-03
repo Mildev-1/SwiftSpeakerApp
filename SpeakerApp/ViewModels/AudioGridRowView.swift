@@ -2,14 +2,23 @@ import SwiftUI
 
 struct AudioGridRowView: View {
     let scriptName: String
+    let languageCode: String?
     let onEditTapped: () -> Void
     let onPracticeTapped: () -> Void
+
+    private var titleText: Text {
+        let name = (scriptName.isEmpty ? "Untitled" : scriptName)
+        if let flag = LanguageFlag.emoji(for: languageCode) {
+            return Text(flag + " ") + Text(name)
+        }
+        return Text(name)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
 
             // Multi-line title on the left
-            Text(scriptName.isEmpty ? "Untitled" : scriptName)
+            titleText
                 .font(.subheadline)
                 .foregroundStyle(.primary)
                 .multilineTextAlignment(.leading)
