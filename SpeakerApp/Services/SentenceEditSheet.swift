@@ -151,7 +151,7 @@ struct SentenceEditSheet: View {
                             .padding(.top, 6)
                         }
 
-                        // ✅ NEW: Hard words list
+                        // Hard words list
                         VStack(spacing: 10) {
                             Text("Hard words")
                                 .font(.headline)
@@ -187,7 +187,6 @@ struct SentenceEditSheet: View {
                     subchunks = SentenceSubchunkBuilder.build(sentence: chunk, editedText: savedText, manualCuts: savedCuts)
                     dlog("onAppear built subchunks=\(subchunks.count)")
 
-                    // Prefer persisted hard words; if none, compute from current text (no persistence until Save)
                     if let persisted = transcriptVM.hardWordsBySentence[chunk.id] {
                         hardWords = persisted
                         dlog("onAppear hardWords persisted count=\(persisted.count)")
@@ -261,7 +260,6 @@ struct SentenceEditSheet: View {
             }
         }
 
-        // refresh from persisted state
         hardWords = transcriptVM.hardWordsBySentence[chunk.id] ?? []
         dlog("savePauses hardWords persisted count=\(hardWords.count)")
 
@@ -303,7 +301,6 @@ struct SentenceEditSheet: View {
         selectedRange = NSRange(location: newLoc, length: 0)
     }
 
-    // Each part has its own rounded rectangle wrapper
     @ViewBuilder
     private func partCard(for sc: SentenceSubchunk) -> some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -328,17 +325,14 @@ struct SentenceEditSheet: View {
             Button {
                 let adj = adjustedTimes(for: sc)
 
-                // ✅ FIX: play ONLY this sentence-part (subchunk), including its fine-tune offsets
-                playback.playSegmentOnce(
+                // ✅ CHANGE: use sentence single-adjust preview to match Practice sentence playback
+                playback.playSentenceSegmentOnce(
                     url: audioURL,
                     start: adj.start,
                     end: adj.end,
                     sentenceID: chunk.id,
                     traceTag: "EDIT_PART"
                 )
-
-                // If your playSegmentOnce signature doesn't have traceTag, use:
-                // playback.playSegmentOnce(url: audioURL, start: adj.start, end: adj.end, sentenceID: chunk.id)
             } label: {
                 Label("Play part \(sc.index + 1)", systemImage: "play.fill")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -409,8 +403,6 @@ struct SentenceEditSheet: View {
         }
     }
 
-
-    // ✅ NEW: hard word card
     @ViewBuilder
     private func hardWordCard(for hw: HardWordSegment) -> some View {
         let tune = transcriptVM.fineTuneForHardWord(hw.id)
@@ -433,7 +425,6 @@ struct SentenceEditSheet: View {
             }
             .buttonStyle(.bordered)
 
-            // Display word in a TextField-style control (read-only for now)
             TextField("", text: .constant(hw.word))
                 .textFieldStyle(.roundedBorder)
                 .disabled(true)

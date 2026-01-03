@@ -207,8 +207,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         loadIfNeeded(url: url)
         guard let p = player, isLoaded else { return }
 
-        // NOTE: This is your current behavior: adjust here (with sentence pads) THEN playSegmentInternal
-        // which adjusts again (same config). We are NOT changing it, only logging it.
+        // NOTE: existing behavior: adjust here (sentence pads) then playSegmentInternal adjusts again.
         let seg = adjustedSegment(start: start, end: end, playerDuration: p.duration, head: headPad, tail: tailPad)
         guard seg.duration > 0.03 else {
             log(.summary, "\(traceTag) playSegmentOnce SKIP tiny raw=[\(t(start)),\(t(end))] adj1=[\(t(seg.start)),\(t(seg.end))] dur=\(ms(seg.duration))")
@@ -334,13 +333,29 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                 for partIndex in 0..<(points.count - 1) {
                     if Task.isCancelled { break }
 
-                    let start = points[partIndex]
-                    let end = points[partIndex + 1]
+                    let rawStart = points[partIndex]
+                    let rawEnd = points[partIndex + 1]
+
+                    // ✅ FIX: apply fine-tune offsets using the SAME stable id scheme as Edit
+                    let subchunkID = SentenceSubchunkBuilder.subchunkID(
+                        sentenceID: chunk.id,
+                        start: rawStart,
+                        end: rawEnd
+                    )
+                    let tune = fineTunesBySubchunk[subchunkID] ?? SegmentFineTune()
+
+                    var start = rawStart + tune.startOffset
+                    var end = rawEnd + tune.endOffset
+
+                    // Clamp to sentence boundaries
+                    start = max(chunk.start, min(start, chunk.end))
+                    end = max(chunk.start, min(end, chunk.end))
+                    if end <= start { end = min(chunk.end, start + 0.05) }
 
                     for rep in 0..<practiceRepeats {
                         if Task.isCancelled { break }
 
-                        log(.verbose, "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(start)),\(t(end))]")
+                        log(.verbose, "PRACTICE_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(t(rawStart)),\(t(rawEnd))] tuned=[\(t(start)),\(t(end))] id=\(subchunkID)")
 
                         let ok = await self.playSegmentInternal(
                             start: start,
@@ -471,7 +486,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
                         )
                         if !ok { break outer }
 
-                        // (kept) always include silence after playback
                         let dur = max(0.03, seg.duration)
                         self.log(.verbose, "PRACTICE_WORD silence after rep=\(rep+1) sleep=\(self.t(dur * mult))s")
                         _ = await self.sleepWithPause(seconds: dur * mult)
@@ -661,7 +675,7 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             self.currentSentenceID = nil
         }
     }
-    
+
     /// Preview a word segment using the SAME playback policy as Practice word playback.
     /// No sentence padding, no double-adjustment. This is what you want for hard-word trimming.
     func playWordSegmentOnce(
@@ -680,8 +694,6 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
 
         currentSentenceID = sentenceID
 
-        // IMPORTANT: do NOT pre-adjust here (no head/tail padding).
-        // Let playSegmentInternal apply exactly wordConfig once.
         singleSegmentTask = Task { [weak self] in
             guard let self else { return }
             _ = await self.playSegmentInternal(
@@ -694,4 +706,33 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
         }
     }
 
+    /// Preview a sentence segment using the SAME policy as Practice sentence playback
+    /// (single adjustment with sentenceConfig; avoids double-padding from playSegmentOnce).
+    func playSentenceSegmentOnce(
+        url: URL,
+        start: Double,
+        end: Double,
+        sentenceID: String? = nil,
+        traceTag: String = "EDIT_PART"
+    ) {
+        stopPartialPlayback()
+        cancelSingleSegment()
+        clearPauseState()
+
+        loadIfNeeded(url: url)
+        guard isLoaded else { return }
+
+        currentSentenceID = sentenceID
+
+        singleSegmentTask = Task { [weak self] in
+            guard let self else { return }
+            _ = await self.playSegmentInternal(
+                start: start,
+                end: end,
+                with: url,
+                config: self.sentenceConfig,
+                traceTag: traceTag
+            )
+        }
+    }
 }
