@@ -28,7 +28,11 @@ struct PracticeView: View {
 
     // Collapsibles
     @State private var showFullscreenControls: Bool = false        // hidden by default
-    @State private var showFlaggingSentences: Bool = true          // visible by default
+    @State private var showFlaggingSentences: Bool = false         // ✅ collapsed by default
+
+    // Mode details (collapsed by default)
+    @State private var showWordsDetails: Bool = false
+    @State private var showSentenceDetails: Bool = false
 
     private var storedMP3URL: URL {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
@@ -55,6 +59,15 @@ struct PracticeView: View {
                 ScrollView {
                     VStack(spacing: 18) {
                         titleCard
+
+                        // ✅ Small label above modes
+                        Text("Shadowing practice")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 2)
+                            .padding(.top, 2)
+
                         wordsShadowingCard
                         sentenceShadowingCard
                         partialPlayCard
@@ -109,14 +122,17 @@ struct PracticeView: View {
 
             Spacer()
 
-            // ✅ Header at the same level as back button
-            Text("My Reading Practice")
-                .font(.headline)
-                .foregroundStyle(.primary)
+            // ✅ Add book icon
+            HStack(spacing: 8) {
+                Image(systemName: "book.open")
+                    .foregroundStyle(.secondary)
+                Text("My Reading Practice")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+            }
 
             Spacer()
 
-            // Balancer so the header stays centered
             Color.clear
                 .frame(width: 44, height: 1)
         }
@@ -135,75 +151,144 @@ struct PracticeView: View {
                     .font(.title3)
                     .fontWeight(.semibold)
                     .multilineTextAlignment(.center)
-                    .foregroundStyle(Color.orange) // ✅ orange title
+                    .foregroundStyle(Color.orange)
                 Spacer(minLength: 0)
             }
             .padding(.vertical, 6)
         }
     }
 
+    // ✅ Words: collapsible, no toggle shown, header pill toggles state.
+    // ✅ Chevron is now far right (indicator pill moved left of it).
     private var wordsShadowingCard: some View {
         let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
+        let hasWords = !wordSegs.isEmpty
 
         return card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Words Shadowing")
-                        .font(.headline)
+
+                HStack(spacing: 10) {
+                    // Icon + title
+                    HStack(spacing: 8) {
+                        Image(systemName: "textformat.abc") // short/word vibe
+                            .foregroundStyle(.secondary)
+                        Text("Words")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
 
                     Spacer()
 
-                    Toggle("", isOn: $wordsShadowingOn)
-                        .labelsHidden()
-                        .disabled(wordSegs.isEmpty)
+                    // Status pill (toggle ON/OFF without expanding)
+                    Button {
+                        guard hasWords else { return }
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            wordsShadowingOn.toggle()
+                        }
+                    } label: {
+                        modeStatusPill(
+                            isOn: wordsShadowingOn && hasWords,
+                            repeats: wordRepeats,
+                            disabled: !hasWords
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!hasWords)
+                    .accessibilityLabel(hasWords ? "Toggle Words" : "No hard words available")
+
+                    // Collapse chevron (max right)
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showWordsDetails.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showWordsDetails ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
 
-                if wordSegs.isEmpty {
+                if !hasWords {
                     Text("No hard words marked (🚀) in Edit yet.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                } else {
-                    if wordsShadowingOn {
-                        VStack(alignment: .leading, spacing: 12) {
-                            repeatsSelector(
-                                title: "Repetitions",
-                                selection: $wordRepeats,
-                                options: [1, 2, 3, 4, 5]
-                            )
+                }
 
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Silence multiplier")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                if showWordsDetails, hasWords {
+                    VStack(alignment: .leading, spacing: 12) {
+                        repeatsSelector(
+                            title: "Repetitions",
+                            selection: $wordRepeats,
+                            options: [1, 2, 3, 4, 5]
+                        )
 
-                                Slider(value: $wordSilenceMultiplier, in: 0.5...15.0, step: 0.1)
-                                Text("\(Int(wordSilenceMultiplier * 100))%")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Speaking silence adjustment")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Slider(value: $wordSilenceMultiplier, in: 0.5...15.0, step: 0.1)
+                            Text("\(Int(wordSilenceMultiplier * 100))%")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
-                        // ✅ Smooth emerge (no “fly”)
-                        .transition(emergeTransition)
                     }
+                    .transition(emergeTransition)
                 }
             }
-            // ✅ animate changes smoothly
-            .animation(.easeInOut(duration: 0.22), value: wordsShadowingOn)
+            .animation(.easeInOut(duration: 0.22), value: showWordsDetails)
         }
     }
 
+    // ✅ Sentences: collapsible, no toggle shown, header pill toggles state.
+    // ✅ Chevron is now far right (indicator pill moved left of it).
     private var sentenceShadowingCard: some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    Text("Sentence Shadowing")
-                        .font(.headline)
+
+                HStack(spacing: 10) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "text.alignleft") // longer/sentence vibe
+                            .foregroundStyle(.secondary)
+                        Text("Sentences")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+
                     Spacer()
-                    Toggle("", isOn: $sentenceShadowingOn)
-                        .labelsHidden()
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            sentenceShadowingOn.toggle()
+                        }
+                    } label: {
+                        modeStatusPill(
+                            isOn: sentenceShadowingOn,
+                            repeats: sentenceRepeats,
+                            disabled: false
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Toggle Sentences")
+
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showSentenceDetails.toggle()
+                        }
+                    } label: {
+                        Image(systemName: showSentenceDetails ? "chevron.up" : "chevron.down")
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
 
-                if sentenceShadowingOn {
+                if showSentenceDetails {
                     VStack(alignment: .leading, spacing: 12) {
                         repeatsSelector(
                             title: "Repetitions",
@@ -212,7 +297,7 @@ struct PracticeView: View {
                         )
 
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Silence multiplier")
+                            Text("Speaking silence adjustment")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
@@ -221,21 +306,17 @@ struct PracticeView: View {
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                         }
-
                     }
-                    // ✅ Smooth emerge
                     .transition(emergeTransition)
                 }
             }
-            .animation(.easeInOut(duration: 0.22), value: sentenceShadowingOn)
+            .animation(.easeInOut(duration: 0.22), value: showSentenceDetails)
         }
     }
 
     private var partialPlayCard: some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
-                // No "Partial play" title
-
                 Button {
                     withAnimation(.easeInOut(duration: 0.22)) {
                         showFullscreenControls.toggle()
@@ -279,7 +360,6 @@ struct PracticeView: View {
                             }
                         }
                     }
-                    // ✅ Smooth emerge (no move from above)
                     .transition(emergeTransition)
                 }
 
@@ -289,7 +369,7 @@ struct PracticeView: View {
                     Label("Flagged Only", systemImage: "flag.fill")
                 }
                 .font(.subheadline)
-                // ✅ NEW: always-visible global shaping toggle
+
                 Toggle(isOn: $sentencesPauseOnly) {
                     Label("Sentences pause only", systemImage: "pause.circle")
                 }
@@ -443,14 +523,36 @@ struct PracticeView: View {
         }
     }
 
-    // MARK: - Smooth transition used across collapsibles
+    // MARK: - UI building blocks
 
     /// “Emerges” without sliding in from outside the card.
     private var emergeTransition: AnyTransition {
         .opacity.combined(with: .scale(scale: 0.98, anchor: .top))
     }
 
-    // MARK: - Shared UI helpers
+    private func modeStatusPill(isOn: Bool, repeats: Int, disabled: Bool) -> some View {
+        let bg = disabled ? Color(.tertiarySystemFill) : (isOn ? Color.blue.opacity(0.18) : Color(.tertiarySystemFill))
+        let fg = disabled ? Color.secondary : (isOn ? Color.blue : Color.secondary)
+        let icon = isOn ? "checkmark.circle.fill" : "circle"
+
+        return HStack(spacing: 6) {
+            Image(systemName: icon)
+                .foregroundStyle(fg)
+            Text("x\(repeats)")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(fg)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(
+            Capsule(style: .continuous).fill(bg)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(isOn && !disabled ? Color.blue.opacity(0.55) : Color.clear, lineWidth: 1)
+        )
+    }
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
@@ -461,6 +563,7 @@ struct PracticeView: View {
             )
     }
 
+    // More distinct selected blue
     private func repeatsSelector(
         title: String,
         selection: Binding<Int>,
@@ -473,17 +576,24 @@ struct PracticeView: View {
 
             HStack(spacing: 10) {
                 ForEach(options, id: \.self) { v in
+                    let selected = (selection.wrappedValue == v)
+
                     Button {
                         selection.wrappedValue = v
                     } label: {
                         Text("\(v)x")
                             .font(.subheadline)
-                            .fontWeight(selection.wrappedValue == v ? .semibold : .regular)
+                            .fontWeight(selected ? .semibold : .regular)
+                            .foregroundStyle(selected ? Color.blue : Color.primary)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 8)
                             .background(
                                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(selection.wrappedValue == v ? Color(.systemBlue).opacity(0.18) : Color(.tertiarySystemFill))
+                                    .fill(selected ? Color.blue.opacity(0.32) : Color(.tertiarySystemFill))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(selected ? Color.blue.opacity(0.75) : Color.clear, lineWidth: 1.2)
                             )
                     }
                     .buttonStyle(.plain)
