@@ -1,5 +1,3 @@
-import Foundation
-
 struct PlaybackSettings: Codable, Hashable {
     var repeatPracticeEnabled: Bool
     var practiceRepeats: Int              // 1...3
@@ -12,10 +10,10 @@ struct PlaybackSettings: Codable, Hashable {
     /// When ON, Partial Play will play only flagged sentences.
     var flaggedOnly: Bool
 
-    // ✅ NEW: Words shadowing settings
+    // ✅ Words shadowing settings
     var wordShadowingEnabled: Bool
     var wordPracticeRepeats: Int              // 1...5
-    var wordPracticeSilenceMultiplier: Double // 0.2...6.0
+    var wordPracticeSilenceMultiplier: Double // 0.2...15.0  ✅ (supports 1500%)
 
     init(
         repeatPracticeEnabled: Bool = false,
@@ -46,7 +44,7 @@ struct PlaybackSettings: Codable, Hashable {
         x.playbackFontScale = min(max(x.playbackFontScale, 1.0), 2.2)
 
         x.wordPracticeRepeats = min(max(x.wordPracticeRepeats, 1), 5)
-        x.wordPracticeSilenceMultiplier = min(max(x.wordPracticeSilenceMultiplier, 0.2), 6.0)
+        x.wordPracticeSilenceMultiplier = min(max(x.wordPracticeSilenceMultiplier, 0.2), 15.0) // ✅ was 6.0
         return x
     }
 
@@ -58,7 +56,6 @@ struct PlaybackSettings: Codable, Hashable {
         case playbackFontScale
         case flaggedOnly
 
-        // ✅ NEW
         case wordShadowingEnabled
         case wordPracticeRepeats
         case wordPracticeSilenceMultiplier

@@ -1,9 +1,5 @@
 import SwiftUI
-#if os(macOS)
-import AppKit
-#endif
 
-/// Practice-only screen for playback options and partial / repeat practice.
 struct PracticeView: View {
     let item: AudioItem
     let onClose: () -> Void
@@ -192,7 +188,7 @@ struct PracticeView: View {
         }
     }
 
-    // 3) Sentence Shadowing card (formerly Shadowing)
+    // 3) Sentence Shadowing card
     private var sentenceShadowingCard: some View {
         card {
             VStack(alignment: .leading, spacing: 12) {
@@ -226,8 +222,7 @@ struct PracticeView: View {
                         Toggle("Sentences pause only", isOn: $sentencesPauseOnly)
                             .font(.subheadline)
 
-                        Toggle("Flagged Only", isOn: $flaggedOnly)
-                            .font(.subheadline)
+                        // ✅ Flagged Only moved to Partial Play (selection concern)
                     }
                 }
             }
@@ -268,7 +263,8 @@ struct PracticeView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Slider(value: $wordSilenceMultiplier, in: 0.5...6.0, step: 0.1)
+                            // ✅ Fix #2: allow up to 1500%
+                            Slider(value: $wordSilenceMultiplier, in: 0.5...15.0, step: 0.1)
                             Text("\(Int(wordSilenceMultiplier * 100))%")
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -279,7 +275,7 @@ struct PracticeView: View {
         }
     }
 
-    // 5) Partial Play / repeat x card
+    // 5) Partial Play card
     private var partialPlayCard: some View {
         let chunksToPlay = filteredSentenceChunksForPartial
         let wordSegs = buildWordSegments(flaggedOnly: flaggedOnly)
@@ -288,6 +284,10 @@ struct PracticeView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Text("Partial play")
                     .font(.headline)
+
+                // ✅ Fix #4: Flagged Only belongs to selection (Partial Play)
+                Toggle("Flagged Only", isOn: $flaggedOnly)
+                    .font(.subheadline)
 
                 HStack(spacing: 12) {
                     Button {
@@ -311,7 +311,6 @@ struct PracticeView: View {
                                     wordPracticeRepeats: wordRepeats,
                                     wordPracticeSilenceMultiplier: wordSilenceMultiplier
                                 ).clamped()
-                                
                             )
 
                             playback.togglePartialPlayWordSegments(
@@ -380,7 +379,7 @@ struct PracticeView: View {
         }
     }
 
-    // 6) Sentences list + flags (tap row = toggle flag)
+    // 6) Sentences list + flags
     private var sentencesSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             if transcriptVM.sentenceChunks.isEmpty {
@@ -486,11 +485,7 @@ struct PracticeView: View {
         transcriptVM.saveCutPlan(itemID: item.id)
     }
 
-    // MARK: - Word segment extraction (no reflection)
-    //
-    // Words were not showing up in Practice because the previous implementation used Mirror/reflection.
-    // `@Published` properties are stored as `_hardWordsBySentence` / `_fineTunesByHardWord`, so reflection
-    // misses them. We now read the concrete dictionaries directly from `TranscriptViewModel`.
+    // MARK: - Word segment extraction
 
     private func buildWordSegments(flaggedOnly: Bool) -> [AudioPlaybackManager.TimedSegment] {
         // sentence bounds for clamping
@@ -506,7 +501,6 @@ struct PracticeView: View {
             guard let bounds = boundsBySentence[sentenceID] else { continue }
 
             for hw in words {
-                // Apply fine tune offsets (same model as sentence parts)
                 let tune = transcriptVM.fineTunesByHardWord[hw.id] ?? SegmentFineTune()
 
                 var s = hw.baseStart + tune.startOffset
@@ -517,7 +511,6 @@ struct PracticeView: View {
                 e = max(bounds.0, min(e, bounds.1))
                 if e <= s { e = min(bounds.1, s + 0.05) }
 
-                // Skip tiny segments
                 if (e - s) < 0.02 { continue }
 
                 out.append(
@@ -534,8 +527,9 @@ struct PracticeView: View {
     }
 }
 
-// MARK: - Row
 
+// Put this BELOW PracticeView in the same file.
+// If you put it in a separate file, remove `private`.
 private struct PracticeSentenceFlagRow: View {
     let chunk: SentenceChunk
     let index: Int
@@ -544,39 +538,40 @@ private struct PracticeSentenceFlagRow: View {
     @ObservedObject var transcriptVM: TranscriptViewModel
 
     private var isFlagged: Bool {
-        transcriptVM.flaggedSentenceIDs.contains(chunk.id)
-    }
-
-    private var textToShow: String {
-        transcriptVM.displayText(for: chunk)
+        transcriptVM.isFlagged(sentenceID: chunk.id)
     }
 
     var body: some View {
-        Button {
-            transcriptVM.toggleFlag(itemID: itemID, sentenceID: chunk.id)
-        } label: {
-            HStack(spacing: 10) {
-                Text("\(index).")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 28, alignment: .trailing)
+        HStack(alignment: .top, spacing: 10) {
+            // index
+            Text("\(index).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 34, alignment: .trailing)
 
-                Text(textToShow)
-                    .foregroundStyle(.primary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .multilineTextAlignment(.leading)
-                    .padding(10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(.thinMaterial)
-                    )
+            // sentence text
+            Text(transcriptVM.displayText(for: chunk))
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
+            // flag toggle
+            Button {
+                transcriptVM.toggleFlag(itemID: itemID, sentenceID: chunk.id)
+            } label: {
                 Image(systemName: isFlagged ? "flag.fill" : "flag")
                     .font(.headline)
-                    .foregroundStyle(isFlagged ? .orange : .secondary)
-                    .padding(.leading, 2)
+                    .foregroundStyle(isFlagged ? Color.orange : Color.secondary)
+                    .padding(.vertical, 6)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color(.tertiarySystemFill))
+                    )
             }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
+        .padding(.vertical, 6)
+        .contentShape(Rectangle())
     }
 }
+
