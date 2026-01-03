@@ -754,4 +754,232 @@ final class AudioPlaybackManager: NSObject, ObservableObject, AVAudioPlayerDeleg
             )
         }
     }
+    
+    // MARK: - Mixed partial play (words before each sentence part)
+
+    func togglePartialPlayMixed(
+        url: URL,
+        chunks: [SentenceChunk],
+        manualCutsBySentence: [String: [Double]],
+        fineTunesBySubchunk: [String: SegmentFineTune],
+        mode: PartialPlaybackMode,
+        wordSegmentsBySentence: [String: [TimedSegment]],
+        wordRepeats: Int,
+        wordSilenceMultiplier: Double
+    ) {
+        cancelSingleSegment()
+        currentSentenceID = nil
+
+        if isPartialPlaying {
+            stopPartialPlayback()
+            stop()
+            return
+        }
+
+        startMixedPlayback(
+            url: url,
+            chunks: chunks,
+            manualCutsBySentence: manualCutsBySentence,
+            fineTunesBySubchunk: fineTunesBySubchunk,
+            mode: mode,
+            wordSegmentsBySentence: wordSegmentsBySentence,
+            wordRepeats: wordRepeats,
+            wordSilenceMultiplier: wordSilenceMultiplier
+        )
+    }
+
+    private func startMixedPlayback(
+        url: URL,
+        chunks: [SentenceChunk],
+        manualCutsBySentence: [String: [Double]],
+        fineTunesBySubchunk: [String: SegmentFineTune],
+        mode: PartialPlaybackMode,
+        wordSegmentsBySentence: [String: [TimedSegment]],
+        wordRepeats: Int,
+        wordSilenceMultiplier: Double
+    ) {
+        stop()
+
+        loadIfNeeded(url: url)
+        guard let _ = player, isLoaded else { return }
+
+        guard !chunks.isEmpty else {
+            errorMessage = "No sentence chunks found. (Transcribe first.)"
+            return
+        }
+
+        clearPauseState()
+
+        player?.numberOfLoops = 0
+        isPartialPlaying = true
+        partialIndex = 0
+        partialTotal = chunks.count
+
+        let wRepeats = min(max(wordRepeats, 1), 5)
+        let wMult = min(max(wordSilenceMultiplier, 0.2), 15.0)
+
+        partialTask = Task { [weak self] in
+            guard let self else { return }
+
+            let practiceRepeats: Int
+            let practiceMult: Double
+            let sentencesOnly: Bool
+            let isRepeatPracticeMode: Bool
+
+            switch mode {
+            case .beepBetweenCuts:
+                practiceRepeats = 1
+                practiceMult = 1.0
+                sentencesOnly = false
+                isRepeatPracticeMode = false
+            case .repeatPractice(let repeats, let silenceMultiplier, let sOnly):
+                practiceRepeats = min(max(repeats, 1), 3)
+                practiceMult = min(max(silenceMultiplier, 0.5), 2.0)
+                sentencesOnly = sOnly
+                isRepeatPracticeMode = true
+            }
+
+            self.log(.summary, "PRACTICE_MIX start chunks=\(chunks.count) sentReps=\(practiceRepeats) sentMult=\(practiceMult) wordsReps=\(wRepeats) wordsMult=\(wMult)")
+
+            for (idx, chunk) in chunks.enumerated() {
+                if Task.isCancelled { break }
+
+                await MainActor.run {
+                    self.partialIndex = idx + 1
+                    self.currentSentenceID = chunk.id
+                }
+
+                // Build points (same as sentence mode)
+                let points: [Double]
+                if sentencesOnly, case .repeatPractice = mode {
+                    points = [chunk.start, chunk.end]
+                } else {
+                    let cuts = (manualCutsBySentence[chunk.id] ?? []).sorted()
+                    var arr = [chunk.start]
+                    arr.append(contentsOf: cuts.filter { $0 > chunk.start && $0 < chunk.end })
+                    arr.append(chunk.end)
+                    points = arr
+                }
+
+                for partIndex in 0..<(points.count - 1) {
+                    if Task.isCancelled { break }
+
+                    let rawStart = points[partIndex]
+                    let rawEnd = points[partIndex + 1]
+
+                    // Apply fine-tune if available (same strategy as sentence practice)
+                    var start = rawStart
+                    var end = rawEnd
+
+                    let subchunkID = SentenceSubchunkBuilder.subchunkID(
+                        sentenceID: chunk.id,
+                        start: rawStart,
+                        end: rawEnd
+                    )
+
+                    if let tune = fineTunesBySubchunk[subchunkID] {
+                        start = rawStart + tune.startOffset
+                        end = rawEnd + tune.endOffset
+
+                        // Clamp, but allow edge parts to extend by up to 0.7s (your existing sentence behavior)
+                        let extra = 0.7
+                        let isFirstPart = (partIndex == 0)
+                        let isLastPart  = (partIndex == points.count - 2)
+
+                        let minStart = isFirstPart ? max(0.0, chunk.start - extra) : chunk.start
+                        let maxEnd   = isLastPart  ? (chunk.end + extra) : chunk.end
+
+                        start = max(minStart, min(start, maxEnd))
+                        end   = max(minStart, min(end, maxEnd))
+                        if end <= start { end = min(maxEnd, start + 0.05) }
+                    }
+
+                    // ✅ 1) play words that belong to THIS part (by timing)
+                    if let allWords = wordSegmentsBySentence[chunk.id], !allWords.isEmpty {
+                        let partWords = allWords.filter { seg in
+                            let mid = (seg.start + seg.end) * 0.5
+                            return mid >= start && mid <= end
+                        }
+
+                        for seg in partWords {
+                            if Task.isCancelled { break }
+
+                            // repeats for this word
+                            for _ in 0..<wRepeats {
+                                if Task.isCancelled { break }
+
+                                let ok = await self.playSegmentInternal(
+                                    start: seg.start,
+                                    end: seg.end,
+                                    with: url,
+                                    config: self.wordConfig,
+                                    traceTag: "PRACTICE_MIX_WORD"
+                                )
+                                if !ok { return }
+
+                                // ALWAYS include silence after word playback (matches your fixed word mode)
+                                let dur = max(0.03, seg.duration)
+                                _ = await self.sleepWithPause(seconds: dur * wMult)
+                            }
+
+                            if Task.isCancelled { break }
+
+                            // keep the existing "word boundary" cue
+                            await self.beep()
+                            _ = await self.sleepWithPause(seconds: 0.12)
+                        }
+                    }
+
+                    // ✅ 2) play sentence part (existing sentence behavior)
+                    for rep in 0..<practiceRepeats {
+                        if Task.isCancelled { break }
+
+                        self.log(.verbose, "PRACTICE_MIX_SENT part rep=\(rep+1)/\(practiceRepeats) raw=[\(self.t(rawStart)),\(self.t(rawEnd))] tuned=[\(self.t(start)),\(self.t(end))] id=\(subchunkID)")
+
+                        let ok = await self.playSegmentInternal(
+                            start: start,
+                            end: end,
+                            with: url,
+                            config: self.sentenceConfig,
+                            traceTag: "PRACTICE_MIX_SENT"
+                        )
+                        if !ok { return }
+
+                        if isRepeatPracticeMode {
+                            let segDur = max(0.05, end - start)
+                            _ = await self.sleepWithPause(seconds: segDur * practiceMult)
+                        }
+                    }
+
+                    if Task.isCancelled { break }
+
+                    // Between-parts cue (same as sentence mode)
+                    if case .beepBetweenCuts = mode {
+                        await self.beep()
+                        _ = await self.sleepWithPause(seconds: 0.12)
+                    } else {
+                        if !sentencesOnly {
+                            await self.beep()
+                            _ = await self.sleepWithPause(seconds: 0.12)
+                        }
+                    }
+                }
+
+                // Sentence boundary cue (same as sentence mode)
+                if case .repeatPractice = mode {
+                    await self.beep()
+                    _ = await self.sleepWithPause(seconds: 0.12)
+                }
+            }
+
+            await MainActor.run {
+                self.isPartialPlaying = false
+                self.partialIndex = 0
+                self.partialTotal = 0
+            }
+
+            self.log(.summary, "PRACTICE_MIX done")
+        }
+    }
+
 }
