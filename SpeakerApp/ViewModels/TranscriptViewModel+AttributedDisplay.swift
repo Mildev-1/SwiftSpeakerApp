@@ -3,10 +3,10 @@ import SwiftUI
 
 extension TranscriptViewModel {
 
-    /// Practice UI sentence text:
+    /// Practice + Fullscreen sentence text:
     /// - keeps ⏸️ pauses visible (styled)
-    /// - removes 🚀 markers (since they are editor-only markers)
-    /// - highlights extracted hard-word segments (orange + bold), using the same saved extraction data
+    /// - removes 🚀 markers (editor-only markers)
+    /// - highlights extracted hard-word segments (orange + bold), using saved extraction data
     func attributedDisplayText(for chunk: SentenceChunk) -> AttributedString {
         let raw = displayText(for: chunk)
 
@@ -18,7 +18,7 @@ extension TranscriptViewModel {
         // Style pauses (⏸️) so they remain visible but not visually loud
         stylePauses(in: &a)
 
-        // Highlight extracted hard-word segments (works for single word OR bundles if `word` contains multiple tokens)
+        // Highlight extracted hard-word segments (single word OR bundles)
         let segments = hardWordsBySentence[chunk.id] ?? []
 
         // Prefer longer phrases first to avoid partial matches stealing highlights
@@ -31,10 +31,11 @@ extension TranscriptViewModel {
         var used: [Range<AttributedString.Index>] = []
 
         for phrase in phrases {
-            // Find first match and highlight it (stable behavior, avoids highlighting duplicates unexpectedly)
+            // Find first match and highlight it (stable behavior)
             if let r = firstNonOverlappingRange(of: phrase, in: a, used: used) {
                 a[r].foregroundColor = .orange
-                a[r].font = .body.bold()
+                // ✅ bold without forcing a fixed font size (so fullscreen fontScale still works)
+                a[r].inlinePresentationIntent = .stronglyEmphasized
                 used.append(r)
             }
         }
@@ -55,7 +56,7 @@ extension TranscriptViewModel {
 
         while start < a.endIndex, let r = a[start...].range(of: token) {
             a[r].foregroundColor = .secondary
-            a[r].font = .caption
+            a[r].inlinePresentationIntent = .emphasized
             start = r.upperBound
         }
     }

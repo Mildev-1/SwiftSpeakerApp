@@ -33,7 +33,6 @@ struct PlaybackScreenView: View {
         playback.isPaused ? "play.fill" : "pause.fill"
     }
 
-    // ✅ solid badge
     private var modeBadge: some View {
         HStack(spacing: 6) {
             Text(modeText)
@@ -50,7 +49,6 @@ struct PlaybackScreenView: View {
         .clipShape(Capsule())
     }
 
-    // ✅ fixed: pill-shaped play/pause that matches toolbar hit shape
     private var playPausePillButton: some View {
         Button {
             playback.togglePause()
@@ -62,7 +60,7 @@ struct PlaybackScreenView: View {
                 .padding(.horizontal, 14)
                 .background(
                     Capsule()
-                        .fill(Color.black.opacity(0.40))   // semi-transparent
+                        .fill(Color.black.opacity(0.40))
                 )
                 .overlay(
                     Capsule()
@@ -84,7 +82,6 @@ struct PlaybackScreenView: View {
             )
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                // Back: stop audio on exit
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
                         playback.stop()
@@ -94,12 +91,10 @@ struct PlaybackScreenView: View {
                     }
                 }
 
-                // Mode badge (top bar center)
                 ToolbarItem(placement: .principal) {
                     modeBadge
                 }
 
-                // ✅ Only Play/Pause button
                 ToolbarItem(placement: .navigationBarTrailing) {
                     playPausePillButton
                 }
@@ -114,7 +109,7 @@ struct PlaybackScreenView: View {
     }
 }
 
-// MARK: - Split subviews (keeps compiler happy)
+// MARK: - Split subviews
 
 private struct PlaybackTranscriptList: View {
     @ObservedObject var playback: AudioPlaybackManager
@@ -137,7 +132,7 @@ private struct PlaybackTranscriptList: View {
                             PlaybackSentenceRow(
                                 index: idx + 1,
                                 sentenceID: chunk.id,
-                                text: transcriptVM.displayText(for: chunk),
+                                attributedText: transcriptVM.attributedDisplayText(for: chunk),
                                 isActive: playback.currentSentenceID == chunk.id,
                                 textFont: textFont,
                                 indexFont: indexFont
@@ -162,7 +157,7 @@ private struct PlaybackTranscriptList: View {
 private struct PlaybackSentenceRow: View {
     let index: Int
     let sentenceID: String
-    let text: String
+    let attributedText: AttributedString
     let isActive: Bool
     let textFont: Font
     let indexFont: Font
@@ -171,12 +166,12 @@ private struct PlaybackSentenceRow: View {
         HStack(alignment: .top, spacing: 10) {
             Text("\(index).")
                 .font(indexFont)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isActive ? Color.orange : Color.secondary)
                 .frame(width: 34, alignment: .trailing)
 
-            Text(text)
+            // ✅ keep attributed colors (hard words highlight) instead of forcing a single foregroundStyle
+            Text(attributedText)
                 .font(textFont)
-                .foregroundStyle(isActive ? .orange : .primary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(12)
