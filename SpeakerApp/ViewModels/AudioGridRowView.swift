@@ -2,31 +2,47 @@ import SwiftUI
 
 struct AudioGridRowView: View {
     let scriptName: String
+    let voiceName: String?
     let languageCode: String?
+
     let onEditTapped: () -> Void
     let onPracticeTapped: () -> Void
 
-    private var titleText: Text {
-        let name = (scriptName.isEmpty ? "Untitled" : scriptName)
-        if let flag = LanguageFlag.emoji(for: languageCode) {
-            return Text(flag + " ") + Text(name)
-        }
-        return Text(name)
+    private var titleString: String {
+        scriptName.isEmpty ? "Untitled" : scriptName
+    }
+
+    private var flagEmoji: String? {
+        LanguageFlag.emoji(for: languageCode)
     }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-
-            // Multi-line title on the left
-            titleText
+            VStack(alignment: .leading, spacing: 4) {
+                // Title line
+                HStack(spacing: 6) {
+                    if let flagEmoji {
+                        Text(flagEmoji)
+                    }
+                    Text(titleString)
+                        .foregroundStyle(Color.yellow) // ✅ yellow title
+                }
                 .font(.subheadline)
-                .foregroundStyle(.primary)
                 .multilineTextAlignment(.leading)
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Buttons on the right
+                // Voice line (if any)
+                if let v = voiceName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !v.isEmpty {
+                    Text(v)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
             HStack(spacing: 10) {
                 Button(action: onEditTapped) {
                     Image(systemName: "pencil")
@@ -34,7 +50,6 @@ struct AudioGridRowView: View {
                         .frame(width: 40, height: 34)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Edit")
 
                 Button(action: onPracticeTapped) {
                     Image(systemName: "person.wave.2")
@@ -42,7 +57,6 @@ struct AudioGridRowView: View {
                         .frame(width: 40, height: 34)
                 }
                 .buttonStyle(.bordered)
-                .accessibilityLabel("Practice")
             }
         }
         .padding(12)

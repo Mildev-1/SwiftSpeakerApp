@@ -14,13 +14,21 @@ struct AudioEditView: View {
 
     @State private var selectedChunk: SentenceChunk? = nil
 
-    // Editable title
     @State private var titleText: String = ""
     @State private var lastSavedTitle: String = ""
 
-    // ✅ Voice (editable)
     @State private var voiceText: String = ""
     @State private var lastSavedVoice: String = ""
+
+    // ✅ flag picker popup
+    @State private var showFlagPicker: Bool = false
+    
+    @FocusState private var focusedField: FocusField?
+
+    private enum FocusField {
+        case title
+        case voice
+    }
 
     private let transcriptStore = TranscriptStore.shared
 
@@ -28,14 +36,22 @@ struct AudioEditView: View {
         AudioStorage.shared.urlForStoredFile(relativePath: item.storedRelativePath)
     }
 
-    /// Always read latest persisted values (languageCode / voiceName) from library if available.
     private var currentItem: AudioItem {
         library.items.first(where: { $0.id == item.id }) ?? item
+    }
+
+    private var currentFlag: String? {
+        LanguageFlag.emoji(for: currentItem.languageCode)
     }
 
     var body: some View {
         ZStack {
             background
+
+            // ✅ Tap outside to dismiss keyboard + persist changes
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { commitAndDismissKeyboard() }
 
             VStack(spacing: 0) {
                 topBar
@@ -53,15 +69,22 @@ struct AudioEditView: View {
                 }
             }
         }
+        .toolbar {                                  // ✅ PUT IT HERE
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    commitAndDismissKeyboard()       // already saves + dismisses
+                    focusedField = nil
+                }
+            }
+        }
         .onAppear {
             transcriptVM.loadIfAvailable(itemID: item.id)
             playback.loadIfNeeded(url: storedMP3URL)
 
-            // Title
             titleText = currentItem.scriptName
             lastSavedTitle = currentItem.scriptName
 
-            // Voice
             let v = (currentItem.voiceName ?? "")
             voiceText = v
             lastSavedVoice = v
@@ -77,6 +100,15 @@ struct AudioEditView: View {
                 words: transcriptVM.words,
                 transcriptVM: transcriptVM
             )
+        }
+        .confirmationDialog("Choose language/flag", isPresented: $showFlagPicker, titleVisibility: .visible) {
+            ForEach(LanguageFlag.pickerOptions) { opt in
+                Button("\(opt.emoji) \(opt.label)") {
+                    let stored = LanguageFlag.storedCode(from: opt.id)
+                    library.updateLanguageCode(id: item.id, languageCode: stored)
+                }
+            }
+            Button("Cancel", role: .cancel) { }
         }
     }
 
@@ -116,18 +148,32 @@ struct AudioEditView: View {
     private var headerSection: some View {
         VStack(spacing: 10) {
 
-            // ✅ Flag centered above title if available
-            if let flag = LanguageFlag.emoji(for: currentItem.languageCode) {
-                Text(flag)
-                    .font(.system(size: 46))
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.bottom, 2)
+            // ✅ Big language flag above Title (tap to override)
+            if let flag = currentFlag {
+                Button {
+                    showFlagPicker = true
+                } label: {
+                    Text(flag)
+                        .font(.system(size: 46))
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.bottom, 2)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // No flag yet: show a small “set” affordance
+                Button {
+                    showFlagPicker = true
+                } label: {
+                    Text("Set language flag")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .buttonStyle(.plain)
             }
 
-            // ✅ Multi-line editable title
             multilineTitleField
 
-            // ✅ Voice label + editable field under title
             VStack(spacing: 6) {
                 Text("Voice")
                     .font(.caption)
@@ -138,10 +184,8 @@ struct AudioEditView: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 420)
                     .multilineTextAlignment(.center)
+                    .focused($focusedField, equals: .voice)   // ✅ HERE
                     .onSubmit { persistVoiceIfNeeded() }
-                    .onChange(of: voiceText) { _ in
-                        persistVoiceIfNeeded()
-                    }
             }
         }
     }
@@ -155,21 +199,22 @@ struct AudioEditView: View {
                 .textFieldStyle(.roundedBorder)
                 .lineLimit(1...3)
                 .fixedSize(horizontal: false, vertical: true)
-                .onSubmit { persistTitleIfNeeded() }
-                .onChange(of: titleText) { _ in
-                    persistTitleIfNeeded()
-                }
+                .foregroundStyle(Color.yellow)
+                .tint(Color.yellow)
+                .focused($focusedField, equals: .title)
+                // don’t rely on onSubmit for multiline
         } else {
             TextField("Title", text: $titleText)
                 .font(.title2.weight(.semibold))
                 .multilineTextAlignment(.center)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit { persistTitleIfNeeded() }
-                .onChange(of: titleText) { _ in
-                    persistTitleIfNeeded()
-                }
+                .foregroundStyle(Color.yellow)
+                .tint(Color.yellow)
+                .focused($focusedField, equals: .title)
+                .onSubmit { persistTitleIfNeeded() } // single-line only on older OS
         }
     }
+
 
     private func persistTitleIfNeeded() {
         let trimmed = titleText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -188,7 +233,19 @@ struct AudioEditView: View {
         lastSavedVoice = trimmed
     }
 
-    // ✅ Basic Play / Stop here
+    private func commitAndDismissKeyboard() {
+        persistTitleIfNeeded()
+        persistVoiceIfNeeded()
+
+        #if os(iOS)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        #endif
+
+        #if os(macOS)
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+    }
+
     private var basicPlaybackSection: some View {
         HStack(spacing: 12) {
             Button {
@@ -221,10 +278,9 @@ struct AudioEditView: View {
         )
     }
 
+    // ✅ This keeps your full transcript UI (chunks list + edit sheet) intact
     private var transcriptSection: some View {
         VStack(spacing: 10) {
-
-            // Transcript list bubble
             VStack(spacing: 10) {
                 if transcriptVM.sentenceChunks.isEmpty {
                     Text(transcriptVM.isTranscribing ? "Transcribing…" : "No transcript yet.")
@@ -263,7 +319,6 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // File name block
             VStack(spacing: 6) {
                 Text("File name:")
                     .font(.caption)
@@ -286,7 +341,6 @@ struct AudioEditView: View {
                     .stroke(.quaternary, lineWidth: 1)
             )
 
-            // Transcription components bubble
             VStack(spacing: 10) {
                 HStack(spacing: 10) {
                     Text("Language")
@@ -302,6 +356,8 @@ struct AudioEditView: View {
                         Text("German").tag("de")
                         Text("French").tag("fr")
                         Text("Italian").tag("it")
+                        Text("Ukrainian").tag("uk")
+                        Text("Russian").tag("ru")
                     }
                     .pickerStyle(.menu)
                 }
@@ -321,12 +377,14 @@ struct AudioEditView: View {
                                 force: force
                             )
 
-                            // ✅ Persist detected languageCode into AudioItem after transcription
-                            if let rec = try? transcriptStore.load(itemID: item.id),
-                               let lang = rec.languageCode,
-                               !lang.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                await MainActor.run {
-                                    library.updateLanguageCode(id: item.id, languageCode: lang)
+                            // Only write detected language if user hasn't overridden
+                            if currentItem.languageCode == nil {
+                                if let rec = try? transcriptStore.load(itemID: item.id),
+                                   let lang = rec.languageCode,
+                                   !lang.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                    await MainActor.run {
+                                        library.updateLanguageCode(id: item.id, languageCode: lang)
+                                    }
                                 }
                             }
                         }

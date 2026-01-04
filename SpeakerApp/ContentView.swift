@@ -34,6 +34,7 @@ struct ContentView: View {
                         ForEach(library.items) { item in
                             AudioGridRowView(
                                 scriptName: item.scriptName,
+                                voiceName: item.voiceName,
                                 languageCode: item.languageCode,
                                 onEditTapped: {
                                     withAnimation(.easeInOut(duration: 0.25)) {

@@ -163,7 +163,9 @@ struct PracticeView: View {
         card {
             HStack {
                 Spacer(minLength: 0)
-                Text(item.scriptName.isEmpty ? "Practice" : item.scriptName)
+                let flag = LanguageFlag.emoji(for: item.languageCode) ?? ""
+                let name = item.scriptName.isEmpty ? "Practice" : item.scriptName
+                Text(flag.isEmpty ? name : "\(flag) \(name)")
                     .font(.title3)
                     .fontWeight(.semibold)
                     .multilineTextAlignment(.center)
