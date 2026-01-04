@@ -28,6 +28,14 @@ final class PracticeStatsManager: ObservableObject {
         Task { await refresh() }
     }
 
+    //func refresh() async {
+    //    let total = await store.totalSeconds(for: itemID)
+    //    let l = await store.logs(for: itemID).sorted { $0.startedAt < $1.startedAt }
+     //   self.totalSeconds = total
+    //    self.logs = l
+   // }
+    
+    @MainActor
     func refresh() async {
         let total = await store.totalSeconds(for: itemID)
         let l = await store.logs(for: itemID).sorted { $0.startedAt < $1.startedAt }

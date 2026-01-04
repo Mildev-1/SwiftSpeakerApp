@@ -2,6 +2,8 @@ import SwiftUI
 
 struct PracticeStatsCardView: View {
     @ObservedObject var stats: PracticeStatsManager
+    var estimatedNextSeconds: Double? = nil
+
     @State private var expanded: Bool = false
 
     var body: some View {
@@ -10,14 +12,29 @@ struct PracticeStatsCardView: View {
 
             if expanded {
                 Divider().opacity(0.6)
-                content
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+
+                VStack(alignment: .leading, spacing: 14) {
+                    if stats.logs.isEmpty {
+                        Text("No practice sessions yet.")
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 10)
+                    } else {
+                        ModeBreakdownView(logs: stats.logs)
+                        PracticeHeatmapView(logs: stats.logs, weeks: 12)
+                    }
+                }
+                .padding(.top, 12)
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color(.separator).opacity(0.35), lineWidth: 1)
         )
         .animation(.easeInOut(duration: 0.22), value: expanded)
     }
@@ -35,176 +52,109 @@ struct PracticeStatsCardView: View {
                     .fontWeight(.semibold)
                     .foregroundStyle(.primary)
 
+                if let est = estimatedNextSeconds, est > 0.5 {
+                    Text("+\(PracticeStatsManager.formatHMS(est))")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.green)
+                }
+
                 Spacer()
 
                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
                     .foregroundStyle(.secondary)
-                    .frame(width: 30, height: 30, alignment: .center)
+                    .frame(width: 30, height: 30)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if stats.logs.isEmpty {
-                Text("No practice sessions yet.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 10)
-            } else {
-                ModeBreakdownChart(logs: stats.logs)
-                FlaggedBreakdownChart(logs: stats.logs)
-                Last7DaysChart(logs: stats.logs)
-                PracticeHeatmap(logs: stats.logs)   // ✅ fixed
-            }
-        }
-        .padding(.top, 12)
-    }
 }
 
-// MARK: - Charts
+// MARK: - Mode breakdown (no Charts; always compiles)
 
-private struct ModeBreakdownChart: View {
+private struct ModeBreakdownView: View {
     let logs: [PracticeSessionLog]
 
-    var body: some View {
-        let totals = PracticeStatsAgg.modeTotals(logs)
-        let sum = max(1.0, totals.values.reduce(0.0, +))
+    private struct Row: Identifiable {
+        let id: PracticeMode
+        let mode: PracticeMode
+        let seconds: Double
+    }
 
-        return VStack(alignment: .leading, spacing: 10) {
+    private var rows: [Row] {
+        let totals = PracticeStatsAgg.modeTotals(logs)
+        let ordered: [PracticeMode] = [.words, .sentences, .mixed, .partial]
+        return ordered.map { Row(id: $0, mode: $0, seconds: totals[$0, default: 0]) }
+            .filter { $0.seconds > 0.1 }
+    }
+
+    private var maxSeconds: Double {
+        rows.map(\.seconds).max() ?? 1
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
             Text("Modes")
                 .font(.headline)
 
-            ForEach(PracticeMode.allCasesOrdered, id: \.self) { mode in
-                let v = totals[mode, default: 0]
-                let pct = v / sum
+            VStack(spacing: 10) {
+                ForEach(rows) { r in
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(r.mode.color)
+                                .frame(width: 8, height: 8)
 
-                HStack(spacing: 10) {
-                    Text(mode.displayName)
-                        .font(.subheadline)
-                        .frame(width: 92, alignment: .leading)
+                            Text(r.mode.displayName)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
 
-                    GeometryReader { geo in
-                        let w = max(4, geo.size.width * pct)
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(mode.color.opacity(0.75))
-                            .frame(width: w, height: 10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    .frame(height: 10)
+                            Spacer()
 
-                    Text(PracticeStatsAgg.formatMinutes(v))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 54, alignment: .trailing)
-                }
-            }
-        }
-    }
-}
-
-private struct FlaggedBreakdownChart: View {
-    let logs: [PracticeSessionLog]
-
-    var body: some View {
-        let (flagged, all) = PracticeStatsAgg.flaggedTotals(logs)
-        let sum = max(1.0, flagged + all)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Flagged Only")
-                .font(.headline)
-
-            HStack(spacing: 10) {
-                Text("Flagged")
-                    .font(.subheadline)
-                    .frame(width: 92, alignment: .leading)
-
-                GeometryReader { geo in
-                    let w = max(4, geo.size.width * (flagged / sum))
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.orange.opacity(0.75))
-                        .frame(width: w, height: 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 10)
-
-                Text(PracticeStatsAgg.formatMinutes(flagged))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 54, alignment: .trailing)
-            }
-
-            HStack(spacing: 10) {
-                Text("All")
-                    .font(.subheadline)
-                    .frame(width: 92, alignment: .leading)
-
-                GeometryReader { geo in
-                    let w = max(4, geo.size.width * (all / sum))
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.blue.opacity(0.55))
-                        .frame(width: w, height: 10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(height: 10)
-
-                Text(PracticeStatsAgg.formatMinutes(all))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 54, alignment: .trailing)
-            }
-        }
-    }
-}
-
-private struct Last7DaysChart: View {
-    let logs: [PracticeSessionLog]
-
-    var body: some View {
-        let days = PracticeStatsAgg.lastNDaysTotals(logs, n: 7)
-
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Last 7 days")
-                .font(.headline)
-
-            HStack(alignment: .bottom, spacing: 6) {
-                let maxVal = max(1.0, days.map(\.seconds).max() ?? 1.0)
-
-                ForEach(days, id: \.dayStart) { d in
-                    VStack(spacing: 6) {
-                        GeometryReader { geo in
-                            let h = max(2, geo.size.height * (d.seconds / maxVal))
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(Color.green.opacity(0.65))
-                                .frame(height: h)
-                                .frame(maxHeight: .infinity, alignment: .bottom)
+                            Text(PracticeStatsManager.formatHMS(r.seconds))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .frame(height: 46)
 
-                        Text(d.shortLabel)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
+                        GeometryReader { geo in
+                            let w = geo.size.width
+                            let frac = CGFloat(min(1.0, r.seconds / maxSeconds))
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(Color(.tertiarySystemFill))
+                                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                    .fill(r.mode.color.opacity(0.35))
+                                    .frame(width: max(6, w * frac))
+                            }
+                        }
+                        .frame(height: 10)
                     }
-                    .frame(maxWidth: .infinity)
                 }
             }
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.tertiarySystemBackground))
+        )
     }
 }
 
-private struct PracticeHeatmap: View {
+// MARK: - Heatmap (GitHub-style)
+
+private struct PracticeHeatmapView: View {
     let logs: [PracticeSessionLog]
+    let weeks: Int
 
     var body: some View {
-        let grid = PracticeStatsAgg.heatmapGrid(logs, weeks: 12)
+        let grid = PracticeStatsAgg.heatmapGrid(logs, weeks: weeks)
 
         return VStack(alignment: .leading, spacing: 10) {
             Text("Practice heatmap")
                 .font(.headline)
 
-            // ✅ FIX: iterate weeks by index (or enumerated) so no Hashable conformance needed.
+            // weeks[weekIndex][dayIndex]
             HStack(alignment: .top, spacing: 4) {
                 ForEach(Array(grid.weeks.enumerated()), id: \.offset) { _, week in
                     VStack(spacing: 4) {
@@ -222,26 +172,22 @@ private struct PracticeHeatmap: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.tertiarySystemBackground))
+        )
     }
 }
 
-// MARK: - Aggregation
+// MARK: - Aggregation helpers (self-contained)
 
 private enum PracticeStatsAgg {
+
     static func modeTotals(_ logs: [PracticeSessionLog]) -> [PracticeMode: Double] {
         var out: [PracticeMode: Double] = [:]
         for l in logs { out[l.mode, default: 0] += l.durationSeconds }
         return out
-    }
-
-    static func flaggedTotals(_ logs: [PracticeSessionLog]) -> (flagged: Double, all: Double) {
-        var flagged: Double = 0
-        var all: Double = 0
-        for l in logs {
-            if l.flaggedOnly { flagged += l.durationSeconds }
-            else { all += l.durationSeconds }
-        }
-        return (flagged, all)
     }
 
     struct DayTotal {
@@ -249,34 +195,6 @@ private enum PracticeStatsAgg {
         let seconds: Double
         let shortLabel: String
         let labelLong: String
-    }
-
-    static func lastNDaysTotals(_ logs: [PracticeSessionLog], n: Int) -> [DayTotal] {
-        let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-
-        let fmtShort = DateFormatter()
-        fmtShort.dateFormat = "E"
-
-        let fmtLong = DateFormatter()
-        fmtLong.dateStyle = .medium
-        fmtLong.timeStyle = .none
-
-        var byDay: [Date: Double] = [:]
-        for l in logs {
-            let d = cal.startOfDay(for: l.startedAt)
-            byDay[d, default: 0] += l.durationSeconds
-        }
-
-        return (0..<n).reversed().map { i in
-            let d = cal.date(byAdding: .day, value: -i, to: today) ?? today
-            return DayTotal(
-                dayStart: d,
-                seconds: byDay[d, default: 0],
-                shortLabel: fmtShort.string(from: d),
-                labelLong: fmtLong.string(from: d)
-            )
-        }
     }
 
     struct Heatmap {
@@ -288,55 +206,59 @@ private enum PracticeStatsAgg {
         let cal = Calendar.current
         let today = cal.startOfDay(for: Date())
 
-        let weekday = cal.component(.weekday, from: today)
-        let daysFromMonday = (weekday + 5) % 7
-        let startOfThisWeek = cal.date(byAdding: .day, value: -daysFromMonday, to: today) ?? today
-
-        let totalDays = weeks * 7
-        let startDay = cal.date(byAdding: .day, value: -(totalDays - 7), to: startOfThisWeek) ?? startOfThisWeek
-
+        // Sum by day
         var byDay: [Date: Double] = [:]
         for l in logs {
             let d = cal.startOfDay(for: l.startedAt)
             byDay[d, default: 0] += l.durationSeconds
         }
 
+        let fmtShort = DateFormatter()
+        fmtShort.dateFormat = "E"
+
         let fmtLong = DateFormatter()
         fmtLong.dateStyle = .medium
         fmtLong.timeStyle = .none
 
-        var allDays: [DayTotal] = []
-        allDays.reserveCapacity(totalDays)
+        let totalDays = weeks * 7
+        let start = cal.date(byAdding: .day, value: -(totalDays - 1), to: today) ?? today
+
+        // Build linear list of days from start..today
+        var days: [DayTotal] = []
+        days.reserveCapacity(totalDays)
 
         for i in 0..<totalDays {
-            let d = cal.date(byAdding: .day, value: i, to: startDay) ?? startDay
-            allDays.append(
+            let d = cal.date(byAdding: .day, value: i, to: start) ?? start
+            days.append(
                 DayTotal(
                     dayStart: d,
                     seconds: byDay[d, default: 0],
-                    shortLabel: "",
+                    shortLabel: fmtShort.string(from: d),
                     labelLong: fmtLong.string(from: d)
                 )
             )
         }
 
-        var outWeeks: [[DayTotal]] = []
-        outWeeks.reserveCapacity(weeks)
+        // Chunk into weeks
+        var w: [[DayTotal]] = []
+        w.reserveCapacity(weeks)
 
-        for w in 0..<weeks {
-            let slice = Array(allDays[(w * 7)..<(w * 7 + 7)])
-            outWeeks.append(slice)
+        var idx = 0
+        for _ in 0..<weeks {
+            let slice = Array(days[idx..<min(idx+7, days.count)])
+            w.append(slice)
+            idx += 7
         }
 
-        return Heatmap(weeks: outWeeks)
+        return Heatmap(weeks: w)
     }
 
     static func heatColor(forSeconds seconds: Double) -> Color {
-        if seconds <= 0.0 { return Color(.tertiarySystemFill) }
-
+        // Intensity bands: 0, <5m, <30m, <2h, <4h, >=4h
         let minutes = seconds / 60.0
         let opacity: Double
-        if minutes < 5 { opacity = 0.18 }
+        if minutes <= 0.01 { opacity = 0.10 }
+        else if minutes < 5 { opacity = 0.18 }
         else if minutes < 30 { opacity = 0.32 }
         else if minutes < 120 { opacity = 0.50 }
         else if minutes < 240 { opacity = 0.70 }
@@ -356,11 +278,9 @@ private enum PracticeStatsAgg {
     }
 }
 
-// MARK: - PracticeMode helpers
+// MARK: - PracticeMode helpers (safe + local)
 
 private extension PracticeMode {
-    static var allCasesOrdered: [PracticeMode] { [.words, .sentences, .mixed, .partial] }
-
     var displayName: String {
         switch self {
         case .words: return "Words"
